@@ -387,6 +387,98 @@ Panel {
                 }
               }
             }
+
+            // Track-change toast switch. Takes effect immediately:
+            // the watcher reads the setting live, no restart involved.
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - 52
+                text: "Track toast"
+                color: root.barForeground
+                opacity: 0.8
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.body
+                elide: Text.ElideRight
+              }
+
+              Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 44
+                height: 24
+                radius: 12
+                property bool on: root.hostWidget ? !!root.hostWidget.setting("toast", true) : true
+                color: on ? (root.bar ? root.bar.urgent : "#e58aa5") : (root.bar ? Qt.alpha(root.bar.barForeground, 0.2) : "#555555")
+
+                Rectangle {
+                  width: 18
+                  height: 18
+                  radius: 9
+                  anchors.verticalCenter: parent.verticalCenter
+                  x: parent.on ? parent.width - width - 3 : 3
+                  color: "white"
+                  Behavior on x { NumberAnimation { duration: 120 } }
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.saveSetting("toast", !parent.on)
+                }
+              }
+            }
+
+            // Toast spot: under the bar icon, or top-center under the
+            // clock. The toast reads it live, so it moves on click.
+            Text {
+              text: "Toast spot"
+              color: root.barForeground
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(6)
+              readonly property string mode: root.hostWidget ? String(root.hostWidget.setting("toastPos", "icon")) : "icon"
+
+              Repeater {
+                model: [
+                  { key: "icon", label: "Near icon" },
+                  { key: "center", label: "Top center" }
+                ]
+
+                delegate: Rectangle {
+                  required property var modelData
+                  readonly property bool picked: parent.mode === modelData.key
+                  width: (settingsCol.width - 16 - 6) / 2
+                  height: 34
+                  radius: 9
+                  color: picked
+                    ? (root.bar ? root.bar.urgent : "#e58aa5")
+                    : (root.bar ? Qt.alpha(root.bar.barForeground, 0.12) : "#333333")
+
+                  Text {
+                    anchors.centerIn: parent
+                    text: modelData.label
+                    color: picked ? (root.bar ? root.bar.background : "white") : root.barForeground
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.body
+                    font.bold: picked
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.saveSetting("toastPos", modelData.key)
+                  }
+                }
+              }
+            }
           }
         }
 
