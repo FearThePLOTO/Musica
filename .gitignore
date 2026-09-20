@@ -1,0 +1,3 @@
+# Local dev-only test helpers — not part of the published plugin.
+/scripts/dev-install
+/scripts/dev-uninstall
