@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.feartheploto.musica",
   "name": "Musica",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "author": "FearThePLOTO",
   "license": "MIT",
-  "description": "Now-playing card with live mini-cava bar icon and built-in keybinds.",
+  "description": "Now-playing card for the Omarchy bar: live cava icon, source tabs, seek, shuffle, repeat, and track toasts over MPRIS.",
   "kinds": ["bar-widget"],
   "entryPoints": {
     "barWidget": "BarWidget.qml"
