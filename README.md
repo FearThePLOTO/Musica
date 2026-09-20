@@ -12,6 +12,9 @@ v2: source tabs with app icons, Spotify-style seek bar, shuffle + repeat
 switch (cava bars vs song name, persisted to shell.json). Tabs are
 always shown and fully independent — nothing auto-switches sources.
 
+UI pass: wave seek bar coupled to live cava, hover animations on every
+button, big fitted artwork.
+
 ## Install (local test)
 
 ```sh
