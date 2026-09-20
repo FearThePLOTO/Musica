@@ -4,6 +4,7 @@
 #   SUPER + ALT + P  play/pause
 #   SUPER + ALT + N  next track
 #   SUPER + ALT + B  previous track (B = back)
+#   SUPER + ALT + S  cycle source (Spotify, Zen, ...)
 # Media keys (XF86AudioPlay/Next/Prev) already drive the shared MPRIS
 # service out of the box, so they are intentionally left untouched.
 #
@@ -23,6 +24,7 @@ block() {
 o.bind("SUPER + ALT + P", "Musica play/pause", "omarchy-shell musica playPause")
 o.bind("SUPER + ALT + N", "Musica next", "omarchy-shell musica next")
 o.bind("SUPER + ALT + B", "Musica previous", "omarchy-shell musica previous")
+o.bind("SUPER + ALT + S", "Musica cycle source", "omarchy-shell musica cycleSource")
 -- <<< musica-keybinds <<<
 EOF
 }

@@ -49,6 +49,46 @@ function artOf(player) {
   return String(player.trackArtUrl || "")
 }
 
+// Raw MPRIS metadata map (xesam:url lives here for browsers).
+function metaOf(player) {
+  if (!player) return {}
+  try {
+    var md = player.metadata
+    if (md) return md
+  } catch (err) {}
+  return {}
+}
+
+function pageUrl(player) {
+  var md = metaOf(player)
+  var keys = ["xesam:url", "xesam:urls", "mpris:url"]
+  for (var i = 0; i < keys.length; i++) {
+    var v = md[keys[i]]
+    if (v) return String(v)
+  }
+  return ""
+}
+
+// Browsers (Zen/Firefox) give no artUrl but do give the page URL.
+// For YouTube that is enough for a real thumbnail.
+function youTubeThumb(page) {
+  var m = String(page || "").match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?[^#]*v=|embed\/|shorts\/|live\/))([\w-]{6,})/)
+  if (m && m[1]) return "https://i.ytimg.com/vi/" + m[1] + "/hqdefault.jpg"
+  return ""
+}
+
+// Ordered artwork candidates, first hit wins. The card walks this
+// list whenever an Image fails, so dead file:// paths and missing
+// browser art degrade instead of breaking.
+function artSources(player) {
+  var out = []
+  var direct = artOf(player)
+  if (direct !== "") out.push(direct)
+  var thumb = youTubeThumb(pageUrl(player))
+  if (thumb !== "" && out.indexOf(thumb) < 0) out.push(thumb)
+  return out
+}
+
 // Parse one cava raw-ascii line ("12;45;900;...") into 0..1 levels.
 // maxRange must match ascii_max_range in the generated cava config.
 function parseLevels(line, count, maxRange) {
@@ -72,4 +112,49 @@ function smoothLevels(prev, next, keep) {
     out.push(p * keep + next[i] * (1 - keep))
   }
   return out
+}
+
+// Stable per-instance key for a player. Empty when none.
+function busOf(p) {
+  if (!p) return ""
+  return String(p.dbusName || "")
+}
+
+// Find a player by bus name, or null.
+function playerByBus(players, bus) {
+  if (!players || !bus) return null
+  for (var i = 0; i < players.length; i++) {
+    if (players[i] && busOf(players[i]) === bus) return players[i]
+  }
+  return null
+}
+
+// Players worth showing a tab for: playing now or have track metadata.
+// Passive stubs with neither stay out of the way.
+function tabPlayers(players) {
+  var out = []
+  if (!players) return out
+  for (var i = 0; i < players.length; i++) {
+    var p = players[i]
+    if (p && (p.isPlaying || p.trackTitle || p.trackArtist)) out.push(p)
+  }
+  return out
+}
+
+function shortName(player) {
+  var s = sourceOf(player)
+  return s !== "" ? s : "Player"
+}
+
+function initialOf(player) {
+  var s = shortName(player)
+  return s.length > 0 ? s.charAt(0).toUpperCase() : "?"
+}
+
+// Seconds -> m:ss. Guards NaN/negative from half-dead players.
+function fmtTime(sec) {
+  var s = Math.max(0, Math.floor(Number(sec) || 0))
+  var m = Math.floor(s / 60)
+  var r = s % 60
+  return m + ":" + (r < 10 ? "0" : "") + r
 }
