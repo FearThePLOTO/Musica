@@ -1,0 +1,54 @@
+#!/bin/bash
+# Musica keybind helper — the keybinds live *in the plugin*, not in your head.
+# Installs opinionated global binds into ~/.config/hypr/bindings.lua:
+#   SUPER + ALT + P  play/pause
+#   SUPER + ALT + N  next track
+#   SUPER + ALT + B  previous track (B = back)
+# Media keys (XF86AudioPlay/Next/Prev) already drive the shared MPRIS
+# service out of the box, so they are intentionally left untouched.
+#
+# Usage:
+#   ./scripts/musica-keybinds install   # add (idempotent)
+#   ./scripts/musica-keybinds remove    # remove again
+set -euo pipefail
+
+BINDINGS="$HOME/.config/hypr/bindings.lua"
+MARK_BEGIN="-- >>> musica-keybinds >>>"
+MARK_END="-- <<< musica-keybinds <<<"
+
+block() {
+  cat <<'EOF'
+-- >>> musica-keybinds >>>
+-- Musica global controls (managed by musica-keybinds; edit keys here freely).
+o.bind("SUPER + ALT + P", "Musica play/pause", "omarchy-shell musica playPause")
+o.bind("SUPER + ALT + N", "Musica next", "omarchy-shell musica next")
+o.bind("SUPER + ALT + B", "Musica previous", "omarchy-shell musica previous")
+-- <<< musica-keybinds <<<
+EOF
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  install)
+    mkdir -p "$(dirname "$BINDINGS")"
+    touch "$BINDINGS"
+    if grep -q "musica-keybinds >>>" "$BINDINGS"; then
+      echo "Musica keybinds already installed in $BINDINGS"
+      exit 0
+    fi
+    block >> "$BINDINGS"
+    echo "Installed Musica keybinds into $BINDINGS (reload Hyprland to apply)."
+    ;;
+  remove)
+    if [ ! -f "$BINDINGS" ] || ! grep -q "musica-keybinds >>>" "$BINDINGS"; then
+      echo "No Musica keybinds found in $BINDINGS"
+      exit 0
+    fi
+    sed -i '/musica-keybinds >>>/,/musica-keybinds <<</d' "$BINDINGS"
+    echo "Removed Musica keybinds from $BINDINGS."
+    ;;
+  *)
+    echo "Usage: $(basename "$0") {install|remove}" >&2
+    exit 1
+    ;;
+esac

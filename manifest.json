@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.feartheploto.musica",
+  "name": "Musica",
+  "version": "0.1.0",
+  "author": "FearThePLOTO",
+  "license": "MIT",
+  "description": "Now-playing card with live mini-cava bar icon and built-in keybinds.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Musica",
+    "description": "Now-playing card with live mini-cava bar icon",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
