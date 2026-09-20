@@ -60,14 +60,25 @@ BarWidget {
     if (p.canTogglePlaying) p.togglePlaying()
     else if (p.isPlaying && p.canPause) p.pause()
     else if (!p.isPlaying && p.canPlay) p.play()
+    pokeToast()
   }
 
   function nextTrack() {
     if (root.player && root.player.canGoNext) root.player.next()
+    pokeToast()
   }
 
   function prevTrack() {
     if (root.player && root.player.canGoPrevious) root.player.previous()
+    pokeToast()
+  }
+
+  // Toast trigger shared by actions and the track watcher. Silent when
+  // the toast is off, the card is open, or nothing is playing. Showing
+  // restarts the hide timer, so rapid skips refresh instead of freezing.
+  function pokeToast() {
+    if (!root.toastOn || root.opened || !root.hasMedia) return
+    if (toastLoader.item && typeof toastLoader.item.show === "function") toastLoader.item.show()
   }
 
   // ---- popup shape contract (Bar.findPanelWidget needs open/close/opened) ----
@@ -100,6 +111,33 @@ BarWidget {
     if ("hostWidget" in target) target.hostWidget = root
   }
 
+  function injectToast() {
+    var target = toastLoader.item
+    if (!target) return
+    if ("bar" in target) target.bar = root.bar
+    if ("anchorItem" in target) target.anchorItem = clickArea
+    if ("hostWidget" in target) target.hostWidget = root
+  }
+
+  // ---- track-change toast: fire on a new signature, never twice ----
+  readonly property bool toastOn: !!root.setting("toast", true)
+  property string lastToastSig: ""
+
+  function trackSig(p) {
+    if (!p) return ""
+    return Model.busOf(p) + "|" + (p.trackTitle || "") + "|" + (p.trackArtist || "")
+  }
+
+  function toastTick() {
+    if (!root.toastOn || root.opened) return
+    var sig = root.trackSig(root.player)
+    if (sig === "" || sig === root.lastToastSig) return
+    var priming = (root.lastToastSig === "")
+    root.lastToastSig = sig
+    if (priming) return
+    pokeToast()
+  }
+
   // ---- mini cava state ----
   readonly property int barCount: 6
   readonly property int cavaMax: 1000
@@ -129,8 +167,14 @@ BarWidget {
   implicitWidth: (root.songMode ? songText.width : row.implicitWidth) + Style.space(14)
   implicitHeight: barSize
 
-  onBarChanged: injectPanel()
-  onPlayerChanged: injectPanel()
+  onBarChanged: {
+    injectPanel()
+    injectToast()
+  }
+  onPlayerChanged: {
+    injectPanel()
+    toastTick()
+  }
 
   Loader {
     id: panelLoader
@@ -140,6 +184,30 @@ BarWidget {
     onLoaded: {
       root.injectPanel()
       Qt.callLater(root.injectPanel)
+    }
+  }
+
+  Loader {
+    id: toastLoader
+    active: true
+    source: Qt.resolvedUrl("Toast.qml")
+    visible: false
+    onLoaded: {
+      root.injectToast()
+      Qt.callLater(root.injectToast)
+    }
+  }
+
+  // Track watcher for the toast: title/artist/play flips re-check the
+  // signature. Stays quiet while the card is open or the toast is off.
+  Instantiator {
+    model: root.players
+    delegate: Connections {
+      required property var modelData
+      target: modelData
+      function onTrackTitleChanged() { root.toastTick() }
+      function onTrackArtistChanged() { root.toastTick() }
+      function onIsPlayingChanged() { root.toastTick() }
     }
   }
 

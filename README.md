@@ -15,6 +15,12 @@ always shown and fully independent — nothing auto-switches sources.
 UI pass: wave seek bar coupled to live cava, hover animations on every
 button, big fitted artwork.
 
+Toast: cover-left mini card on track change AND on skip/prev/play/pause
+(selected tab only, silent while the card is open), click raises the
+player app. Toggle plus spot (near icon vs top center) in settings,
+both instant, no restart. Note: with built-in omarchy.media still
+enabled its own text OSD fires too — ours covers our tab only.
+
 ## Install (local test)
 
 ```sh
