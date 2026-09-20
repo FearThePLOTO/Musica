@@ -15,12 +15,43 @@ BarWidget {
 
   // ---- now playing (direct MPRIS, no dependency on omarchy.media) ----
   readonly property var players: Mpris.players ? Mpris.players.values : []
-  readonly property var player: Model.pickPlayer(players)
+
+  // Card tab selection, shared with Panel.qml via hostWidget. Empty = auto.
+  property string selectedBus: ""
+
+  readonly property var player: Model.playerByBus(players, selectedBus) || Model.pickPlayer(players)
   readonly property bool hasMedia: player !== null && (player.trackTitle || player.trackArtist)
   readonly property bool isPlaying: player ? !!player.isPlaying : false
   readonly property string tip: hasMedia
     ? (Model.titleOf(player) + (Model.artistOf(player) ? " — " + Model.artistOf(player) : ""))
     : "Musica — nothing playing"
+
+  function selectPlayer(bus) {
+    selectedBus = String(bus || "")
+  }
+
+  // Jump selection to the next known source. Manual only (card `s` key,
+  // keybind, IPC) — never automatic. Every tab is independent.
+  function cycleSource() {
+    var tabs = Model.tabPlayers(players)
+    if (tabs.length < 2) return
+    var cur = Model.busOf(player)
+    for (var i = 0; i < tabs.length; i++) {
+      if (Model.busOf(tabs[i]) === cur) {
+        selectedBus = Model.busOf(tabs[(i + 1) % tabs.length])
+        return
+      }
+    }
+    selectedBus = Model.busOf(tabs[0])
+  }
+
+  // Bar look, chosen in the card's settings popup: "cava" mini-spectrum
+  // or "song" now-playing label. Persisted on the shell.json entry.
+  readonly property string barMode: String(setting("barMode", "cava"))
+  readonly property bool songMode: barMode === "song"
+  readonly property string songLabel: hasMedia
+    ? (Model.titleOf(player) + (Model.artistOf(player) ? "  ·  " + Model.artistOf(player) : ""))
+    : "Musica"
 
   // ---- transport (also the IPC surface used by keybinds) ----
   function togglePlaying() {
@@ -67,7 +98,6 @@ BarWidget {
     if ("settings" in target) target.settings = root.settings
     if ("anchorItem" in target) target.anchorItem = clickArea
     if ("hostWidget" in target) target.hostWidget = root
-    if ("player" in target) target.player = Qt.binding(function() { return root.player })
   }
 
   // ---- mini cava state ----
@@ -96,7 +126,7 @@ BarWidget {
     root.levels = Model.smoothLevels(root.levels, next, 0.55)
   }
 
-  implicitWidth: row.implicitWidth + Style.space(14)
+  implicitWidth: (root.songMode ? songText.width : row.implicitWidth) + Style.space(14)
   implicitHeight: barSize
 
   onBarChanged: injectPanel()
@@ -121,6 +151,7 @@ BarWidget {
     function playPause(): string { root.togglePlaying(); return "ok" }
     function next(): string { root.nextTrack(); return "ok" }
     function previous(): string { root.prevTrack(); return "ok" }
+    function cycleSource(): string { root.cycleSource(); return "ok" }
     function open(): void { root.open() }
     function close(): void { root.close() }
     function toggle(): void { root.togglePanel() }
@@ -138,7 +169,7 @@ BarWidget {
 
   Process {
     id: cavaProc
-    running: root.hasCava && root.isPlaying
+    running: root.hasCava && root.isPlaying && !root.songMode
     command: ["bash", "-lc", root.cavaConfig()]
     stdout: SplitParser {
       splitMarker: "\n"
@@ -164,6 +195,7 @@ BarWidget {
     id: row
     anchors.centerIn: parent
     spacing: 3
+    visible: !root.songMode
 
     Repeater {
       model: root.barCount
@@ -189,6 +221,20 @@ BarWidget {
         }
       }
     }
+  }
+
+  Text {
+    id: songText
+    anchors.centerIn: parent
+    width: Math.min(implicitWidth, 180)
+    visible: root.songMode
+    text: root.songLabel
+    textFormat: Text.PlainText
+    elide: Text.ElideRight
+    maximumLineCount: 1
+    color: root.bar.barForeground
+    font.family: root.bar.fontFamily
+    font.pixelSize: Style.font.body
   }
 
   MouseArea {
