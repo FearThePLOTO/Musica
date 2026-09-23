@@ -267,6 +267,7 @@ Panel {
                 }
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.centerIn: parent
                   visible: !tabIcon.visible
                   text: Model.initialOf(modelData)
@@ -310,6 +311,7 @@ Panel {
             Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
             Text {
+              textFormat: Text.PlainText
               anchors.centerIn: parent
               text: "󰒓"
               font.pixelSize: 18
@@ -341,6 +343,7 @@ Panel {
             spacing: Style.space(8)
 
             Text {
+              textFormat: Text.PlainText
               text: "Bar look"
               color: root.barForeground
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -371,6 +374,7 @@ Panel {
                     : (root.bar ? Qt.alpha(root.bar.barForeground, 0.12) : "#333333")
 
                   Text {
+                    textFormat: Text.PlainText
                     anchors.centerIn: parent
                     text: modelData.label
                     color: picked ? (root.bar ? root.bar.background : "white") : root.barForeground
@@ -395,6 +399,7 @@ Panel {
               spacing: Style.space(8)
 
               Text {
+                textFormat: Text.PlainText
                 anchors.verticalCenter: parent.verticalCenter
                 width: parent.width - 52
                 text: "Track toast"
@@ -434,6 +439,7 @@ Panel {
             // Toast spot: under the bar icon, or top-center under the
             // clock. The toast reads it live, so it moves on click.
             Text {
+              textFormat: Text.PlainText
               text: "Toast spot"
               color: root.barForeground
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -463,6 +469,7 @@ Panel {
                     : (root.bar ? Qt.alpha(root.bar.barForeground, 0.12) : "#333333")
 
                   Text {
+                    textFormat: Text.PlainText
                     anchors.centerIn: parent
                     text: modelData.label
                     color: picked ? (root.bar ? root.bar.background : "white") : root.barForeground
@@ -493,6 +500,7 @@ Panel {
             color: root.bar ? Qt.alpha(root.bar.barForeground, 0.08) : "#333333"
 
             Text {
+              textFormat: Text.PlainText
               anchors.centerIn: parent
               text: "󰝚"
               font.pixelSize: 56
@@ -523,6 +531,7 @@ Panel {
           spacing: Style.space(2)
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             text: root.hasMedia ? (root.title || "Unknown title") : "Nothing playing"
             color: root.barForeground
@@ -534,6 +543,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             text: root.hasMedia ? (root.sub || "Unknown artist") : "Start Spotify, Zen, anything MPRIS"
             color: root.barForeground
@@ -545,6 +555,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             visible: root.source !== ""
             width: parent.width
             text: "via " + root.source
@@ -675,6 +686,7 @@ Panel {
             width: parent.width
 
             Text {
+              textFormat: Text.PlainText
               width: 40
               text: root.canSeekBar ? Model.fmtTime(root.shownPos) : "--:--"
               color: root.barForeground
@@ -686,6 +698,7 @@ Panel {
             Item { width: parent.width - 80; height: 1 }
 
             Text {
+              textFormat: Text.PlainText
               width: 40
               horizontalAlignment: Text.AlignRight
               text: root.canSeekBar ? Model.fmtTime(root.player.length) : "--:--"
@@ -714,6 +727,7 @@ Panel {
             Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
             Text {
+              textFormat: Text.PlainText
               anchors.centerIn: parent
               text: ""
               font.pixelSize: 22
@@ -740,6 +754,7 @@ Panel {
             Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
             Text {
+              textFormat: Text.PlainText
               anchors.centerIn: parent
               text: "󰒮"
               font.pixelSize: 28
@@ -765,6 +780,7 @@ Panel {
             Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
             Text {
+              textFormat: Text.PlainText
               anchors.centerIn: parent
               text: root.playing ? "󰏤" : "󰐊"
               font.pixelSize: 30
@@ -790,6 +806,7 @@ Panel {
             Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
             Text {
+              textFormat: Text.PlainText
               anchors.centerIn: parent
               text: "󰒭"
               font.pixelSize: 28
@@ -819,6 +836,7 @@ Panel {
             Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
             Text {
+              textFormat: Text.PlainText
               anchors.centerIn: parent
               text: parent.one ? "󰑘" : "󰑖"
               font.pixelSize: 22
