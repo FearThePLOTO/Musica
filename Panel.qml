@@ -19,6 +19,11 @@ Panel {
   property var hostWidget: null
   property bool settingsOpen: false
 
+  // Content ink that stays readable on the popup surface on any theme.
+  // barForeground belongs to the bar STRIP (light on Everforest) while
+  // the card is dark — built-ins use bar.foreground for panel content.
+  readonly property color ink: root.bar ? root.bar.foreground : Color.foreground
+
   readonly property var players: hostWidget ? hostWidget.players : []
   readonly property var tabs: Model.tabPlayers(players)
   readonly property var player: hostWidget ? hostWidget.player : null
@@ -273,7 +278,7 @@ Panel {
                   text: Model.initialOf(modelData)
                   font.pixelSize: Style.font.body
                   font.bold: true
-                  color: root.barForeground
+                  color: root.ink
                 }
 
                 Rectangle {
@@ -315,7 +320,7 @@ Panel {
               anchors.centerIn: parent
               text: "󰒓"
               font.pixelSize: 18
-              color: root.barForeground
+              color: root.ink
             }
 
             MouseArea {
@@ -345,7 +350,7 @@ Panel {
             Text {
               textFormat: Text.PlainText
               text: "Bar look"
-              color: root.barForeground
+              color: root.ink
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.body
               font.bold: true
@@ -377,7 +382,7 @@ Panel {
                     textFormat: Text.PlainText
                     anchors.centerIn: parent
                     text: modelData.label
-                    color: picked ? (root.bar ? root.bar.background : "white") : root.barForeground
+                    color: picked ? (root.bar ? root.bar.background : "white") : root.ink
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.body
                     font.bold: picked
@@ -403,7 +408,7 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
                 width: parent.width - 52
                 text: "Track toast"
-                color: root.barForeground
+                color: root.ink
                 opacity: 0.8
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.body
@@ -441,7 +446,7 @@ Panel {
             Text {
               textFormat: Text.PlainText
               text: "Toast spot"
-              color: root.barForeground
+              color: root.ink
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.body
               font.bold: true
@@ -472,7 +477,7 @@ Panel {
                     textFormat: Text.PlainText
                     anchors.centerIn: parent
                     text: modelData.label
-                    color: picked ? (root.bar ? root.bar.background : "white") : root.barForeground
+                    color: picked ? (root.bar ? root.bar.background : "white") : root.ink
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.body
                     font.bold: picked
@@ -504,7 +509,7 @@ Panel {
               anchors.centerIn: parent
               text: "󰝚"
               font.pixelSize: 56
-              color: root.barForeground
+              color: root.ink
               opacity: 0.5
             }
           }
@@ -534,7 +539,7 @@ Panel {
             textFormat: Text.PlainText
             width: parent.width
             text: root.hasMedia ? (root.title || "Unknown title") : "Nothing playing"
-            color: root.barForeground
+            color: root.ink
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.title
             font.bold: true
@@ -546,7 +551,7 @@ Panel {
             textFormat: Text.PlainText
             width: parent.width
             text: root.hasMedia ? (root.sub || "Unknown artist") : "Start Spotify, Zen, anything MPRIS"
-            color: root.barForeground
+            color: root.ink
             opacity: 0.7
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.body
@@ -559,7 +564,7 @@ Panel {
             visible: root.source !== ""
             width: parent.width
             text: "via " + root.source
-            color: root.barForeground
+            color: root.ink
             opacity: 0.45
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
@@ -631,8 +636,9 @@ Panel {
                 var ctx = getContext("2d")
                 var w = width
                 var h = height
+                if (w <= 0 || h <= 0) return
                 ctx.clearRect(0, 0, w, h)
-                var dim = root.bar ? Qt.alpha(root.bar.barForeground, root.canSeekBar ? 0.20 : 0.10) : "#444444"
+                var dim = root.bar ? Qt.alpha(root.ink, root.canSeekBar ? 0.22 : 0.12) : "#444444"
                 var hot = root.bar ? root.bar.urgent : "#e58aa5"
                 waveFill(ctx, 0, w, dim)
                 var px = w * seekHit.ratio
@@ -689,7 +695,7 @@ Panel {
               textFormat: Text.PlainText
               width: 40
               text: root.canSeekBar ? Model.fmtTime(root.shownPos) : "--:--"
-              color: root.barForeground
+              color: root.ink
               opacity: 0.7
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.caption
@@ -702,7 +708,7 @@ Panel {
               width: 40
               horizontalAlignment: Text.AlignRight
               text: root.canSeekBar ? Model.fmtTime(root.player.length) : "--:--"
-              color: root.barForeground
+              color: root.ink
               opacity: 0.7
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.caption
@@ -732,7 +738,7 @@ Panel {
               text: ""
               font.pixelSize: 22
               color: parent.on ? (root.bar ? root.bar.urgent : "#e58aa5")
-                : (shuffleHover.containsMouse ? "white" : root.barForeground)
+                : (shuffleHover.containsMouse ? Qt.lighter(root.ink, 1.4) : root.ink)
             }
 
             MouseArea {
@@ -758,7 +764,7 @@ Panel {
               anchors.centerIn: parent
               text: "󰒮"
               font.pixelSize: 28
-              color: prevHover.containsMouse ? "white" : root.barForeground
+              color: prevHover.containsMouse ? Qt.lighter(root.ink, 1.4) : root.ink
             }
 
             MouseArea {
@@ -784,7 +790,7 @@ Panel {
               anchors.centerIn: parent
               text: root.playing ? "󰏤" : "󰐊"
               font.pixelSize: 30
-              color: playHover.containsMouse ? (root.bar ? root.bar.urgent : "#e58aa5") : "white"
+              color: playHover.containsMouse ? (root.bar ? root.bar.urgent : "#e58aa5") : root.ink
             }
 
             MouseArea {
@@ -810,7 +816,7 @@ Panel {
               anchors.centerIn: parent
               text: "󰒭"
               font.pixelSize: 28
-              color: nextHover.containsMouse ? "white" : root.barForeground
+              color: nextHover.containsMouse ? Qt.lighter(root.ink, 1.4) : root.ink
             }
 
             MouseArea {
@@ -841,7 +847,7 @@ Panel {
               text: parent.one ? "󰑘" : "󰑖"
               font.pixelSize: 22
               color: parent.on ? (root.bar ? root.bar.urgent : "#e58aa5")
-                : (repeatHover.containsMouse ? "white" : root.barForeground)
+                : (repeatHover.containsMouse ? Qt.lighter(root.ink, 1.4) : root.ink)
             }
 
             MouseArea {

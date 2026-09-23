@@ -17,6 +17,9 @@ Item {
   property var hostWidget: null
   property var anchorItem: null
 
+  // Same readable-on-any-theme ink as the card.
+  readonly property color ink: root.bar ? root.bar.foreground : Color.foreground
+
   readonly property var player: hostWidget ? hostWidget.player : null
   readonly property string title: Model.titleOf(player)
   readonly property string sub: Model.artistAlbum(player)
@@ -126,7 +129,7 @@ Item {
               anchors.centerIn: parent
               text: "󰝚"
               font.pixelSize: 22
-              color: root.bar ? root.bar.barForeground : "white"
+              color: root.bar ? root.ink : "white"
               opacity: 0.5
             }
           }
@@ -154,7 +157,7 @@ Item {
             textFormat: Text.PlainText
             width: parent.width
             text: root.title !== "" ? root.title : "Unknown title"
-            color: root.bar ? root.bar.barForeground : "white"
+            color: root.bar ? root.ink : "white"
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.body
             font.bold: true
@@ -166,7 +169,7 @@ Item {
             textFormat: Text.PlainText
             width: parent.width
             text: root.sub !== "" ? root.sub : "Unknown artist"
-            color: root.bar ? root.bar.barForeground : "white"
+            color: root.bar ? root.ink : "white"
             opacity: 0.7
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption

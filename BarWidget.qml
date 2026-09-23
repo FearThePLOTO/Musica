@@ -53,6 +53,9 @@ BarWidget {
     ? (Model.titleOf(player) + (Model.artistOf(player) ? "  ·  " + Model.artistOf(player) : ""))
     : "Musica"
 
+  // Content ink matching the card: readable on any theme.
+  readonly property color ink: root.bar ? root.bar.foreground : Color.foreground
+
   // ---- transport (also the IPC surface used by keybinds) ----
   function togglePlaying() {
     var p = root.player
@@ -300,7 +303,7 @@ BarWidget {
     textFormat: Text.PlainText
     elide: Text.ElideRight
     maximumLineCount: 1
-    color: root.bar.barForeground
+    color: root.bar ? root.ink : Color.foreground
     font.family: root.bar.fontFamily
     font.pixelSize: Style.font.body
   }
