@@ -14,7 +14,7 @@ function pickPlayer(players) {
     p = players[i]
     if (p && (p.trackTitle || p.trackArtist)) return p
   }
-  return players[0]
+  return players[0] || null
 }
 
 function titleOf(player) {
