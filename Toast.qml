@@ -122,6 +122,7 @@ Item {
             color: root.bar ? Qt.alpha(root.bar.barForeground, 0.08) : "#333333"
 
             Text {
+              textFormat: Text.PlainText
               anchors.centerIn: parent
               text: "󰝚"
               font.pixelSize: 22
@@ -150,6 +151,7 @@ Item {
           spacing: Style.space(2)
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             text: root.title !== "" ? root.title : "Unknown title"
             color: root.bar ? root.bar.barForeground : "white"
@@ -161,6 +163,7 @@ Item {
           }
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             text: root.sub !== "" ? root.sub : "Unknown artist"
             color: root.bar ? root.bar.barForeground : "white"
