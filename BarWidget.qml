@@ -99,6 +99,9 @@ BarWidget {
   property bool mixerRunning: false
   property string mixerError: ""
   property var mixerQueue: null
+  // Last device the mix fed, from the status poll or a switch made in the
+  // console. Empty until the mixer has reported once.
+  property string mixerTargetName: ""
 
   // Plugin-relative, so a dev copy and an installed copy each resolve their own.
   readonly property string mixerScript: Qt.resolvedUrl("scripts/musica-mixer").toString().replace(/^file:\/\//, "")
@@ -168,6 +171,16 @@ BarWidget {
     if (remembered === null) return
     if (remembered) root.runMixer(root.mixerArgs(root.mixerMode))
     else root.runMixer(["off"])
+  }
+
+  // The device the mix feeds. The helper knows it and the status poll reports
+  // it, so the console reads it from there rather than tracking it twice.
+  function mixerTarget() {
+    return root.mixerTargetName
+  }
+
+  function rememberMixerTarget(name) {
+    root.mixerTargetName = name
   }
 
   // Switching output -- headphones, HDMI -- has to move the mix with it, or the
@@ -382,6 +395,7 @@ BarWidget {
         var s = String(line).trim()
         if (s === "active=yes") root.mixerRunning = true
         else if (s === "active=no") root.mixerRunning = false
+        else if (s.indexOf("target=") === 0) root.mixerTargetName = s.slice(7)
       }
     }
   }

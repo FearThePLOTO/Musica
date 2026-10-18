@@ -22,9 +22,10 @@ anything else that exposes the standard Linux media interface.
   without player support
 - **Toast:** cover-left mini card on track change and transport actions,
   click raises the player app
-- **Sound mixer:** a system-wide 10-band equalizer in a floating window, next
-  to the settings gear: six use modes, the eight Winamp classics, and a custom
-  curve you drag by hand and hear while you drag it
+- **Sound console:** the logo in the card opens a floating window with three
+  tabs: a system-wide 10-band equalizer (six use modes, the eight Winamp
+  classics, and a curve you hear while you drag it), a level per output device
+  from 0 to 150%, and the plugin's settings
 - **Keybinds** ship in the plugin (`SUPER+ALT+P/N/B/S`), plus direct IPC
 - **Settings** persist to `shell.json`: bar look, toast on/off + spot,
   and every toggle takes effect instantly
@@ -64,11 +65,13 @@ not part of the plugin.
 
 ## Sound mixer
 
-The equalizer icon in the card header opens a system-wide mixer: everything
-you play goes through a 10-band equalizer. It is built the way Omarchy builds
-speaker tuning, as a PipeWire filter chain in a transient user unit reading a
-config from the session runtime directory. So it installs nothing, writes no
-`~/.config` file, never restarts your audio server, and disappears at logout.
+The logo in the card header opens a floating sound console with three tabs:
+the equalizer, the output devices, and the plugin's own settings.
+
+The equalizer is built the way Omarchy builds speaker tuning, as a PipeWire
+filter chain in a transient user unit reading a config from the session runtime
+directory. So it installs nothing, writes no `~/.config` file, never restarts
+your audio server, and disappears at logout.
 
 - **Modes:** Normal (flat), then Music, Movie, Voice and Night, which are
   shaped for what you are doing rather than for a genre. Custom keeps your own
@@ -85,6 +88,17 @@ config from the session runtime directory. So it installs nothing, writes no
 - Your mode and curve are remembered across shell restarts. Volume keys keep
   working: the headroom the curve needs is carried by the mixer itself, so
   your volume still drives the real output device.
+
+The **Outputs** tab lists every output device with its own level from 0 to
+150%, the same ceiling Omarchy's own audio panel uses for streams. Click a row
+to make that device the output, right-click its fader to mute it. Raising a
+muted device unmutes it, which is what the volume keys do. When the mixer is
+on it is the default output, so the levels shown are the devices underneath it:
+the same resolution the volume keys make, so the console and your keyboard can
+never disagree about what is loud.
+
+The **Settings** tab holds what the card used to carry in its own popup: bar
+look, track toast and where the toast lands.
 
 Boosts cost headroom. The mixer's own level comes from the curve's true summed
 peak, computed from the band filters it renders, rather than from the curve's
@@ -105,6 +119,8 @@ What it does not do:
 - The headroom calculation assumes the 48 kHz graph Omarchy runs.
 - The console floats and centers itself through a window rule it registers with
   Hyprland, so on another compositor it opens as a normal window instead.
+- Past 100% a device can clip, since that is what overamplification is. The
+  console says so next to the faders.
 
 The console opens as a floating window rather than a full-screen panel, so it
 behaves like any other app window: it takes no tile, and the window manager can

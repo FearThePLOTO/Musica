@@ -1,5 +1,71 @@
-// Musica shared logic: active-player picking, labels, cava parsing.
-// Kept in JS so BarWidget.qml and Panel.qml stay declarative.
+// Musica shared logic: active-player picking, labels, cava parsing,
+// output-device rows. Kept in JS so the QML stays declarative.
+
+// The mixer's own sink, which is a filter chain rather than a device: it is not
+// an output a user picks a level for, and its volume is the curve's headroom
+// rather than loudness. Omarchy's audio panel drops its own tuning sink from
+// the lists for the same reason.
+var MIXER_SINK = "musica_mixer"
+
+// Ceiling for a device level. Past 100% a boosted signal clips in the graph, so
+// this is deliberately not unlimited; Omarchy's own audio panel holds streams to
+// the same 150%.
+var MAX_OUTPUT = 1.5
+
+// Every real output device, newest list first. Sinks only: a source is an input,
+// and a sink-input is an application's stream, neither of which is an output.
+function outputSinks(nodes) {
+  var out = []
+  for (var i = 0; i < (nodes || []).length; i++) {
+    var n = nodes[i]
+    if (!n || !n.isSink || n.isStream) continue
+    if (String(n.name || "") === MIXER_SINK) continue
+    if (!n.audio) continue
+    out.push(n)
+  }
+  return out
+}
+
+// The name PipeWire hands a device is its driver plumbing. What a person would
+// call it is in the nickname the device publishes, and ALSA's is often a whole
+// sentence, so the driver prefixes and role suffixes come off.
+function outputLabel(node) {
+  if (!node) return "Unknown"
+  var raw = String(node.nickname || node.description || node.name || "Unknown")
+  return raw
+    .replace(/^sof-soundwire\s+/i, "")
+    .replace(/^built-?in audio\s+/i, "")
+    .replace(/^alsa_output\./i, "")
+    .replace(/\s*\(hw:\d+,\d+\)\s*$/i, "")
+    .replace(/\s*\(default\)\s*$/i, "")
+    .replace(/\s+(Output|Input)$/i, "")
+    .trim() || "Output"
+}
+
+// A device glyph by what it is: a headphone can be told from a speaker by its
+// own description, and the transport by the profile it advertises.
+function outputGlyph(node) {
+  if (!node) return "󰓃"
+  var props = node.properties || {}
+  var blob = String([
+    node.name, node.description, node.nickname,
+    props["device.icon-name"] || "",
+    props["device.product.name"] || ""
+  ].join(" ")).toLowerCase()
+  if (blob.indexOf("headphone") !== -1 || blob.indexOf("headset") !== -1
+    || blob.indexOf("airpod") !== -1 || blob.indexOf("earbud") !== -1) return "󰋋"
+  if (blob.indexOf("bluetooth") !== -1) return "󰂯"
+  if (blob.indexOf("hdmi") !== -1 || blob.indexOf("display") !== -1) return "󰍹"
+  return "󰓃"
+}
+
+// A device level in the 0..MAX_OUTPUT range the slider uses. Quickshell reports
+// linear amplitude, so 150% is 1.5, not 1.15.
+function clampOutput(v) {
+  var n = Number(v)
+  if (!isFinite(n)) return 0
+  return Math.max(0, Math.min(MAX_OUTPUT, n))
+}
 
 // Prefer the player that is actually playing, then one with metadata,
 // then whatever is around. Mirrors the built-in omarchy.media policy.

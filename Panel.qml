@@ -17,7 +17,6 @@ Panel {
 
   property var anchorItem: null
   property var hostWidget: null
-  property bool settingsOpen: false
 
   // The mixer console itself lives in Mixer.qml, owned by the host widget.
   readonly property bool mixerOpen: root.hostWidget ? root.hostWidget.mixerOpened === true : false
@@ -86,7 +85,6 @@ Panel {
   }
 
   function close() {
-    root.settingsOpen = false
     // A drag abandoned via Esc never sees onReleased: drop the stale
     // seek state so the bar can't stick on reopen. No commit, just cancel.
     root.seeking = false
@@ -125,15 +123,6 @@ Panel {
     if (p.loopState === MprisLoopState.None) p.loopState = MprisLoopState.Playlist
     else if (p.loopState === MprisLoopState.Playlist) p.loopState = MprisLoopState.Track
     else p.loopState = MprisLoopState.None
-  }
-
-  function saveSetting(key, value) {
-    var entry = { id: root.moduleName }
-    var cur = root.settings || {}
-    for (var k in cur) if (k !== "id") entry[k] = cur[k]
-    entry[key] = value
-    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
-      root.bar.shell.updateEntryInline(root.moduleName, entry)
   }
 
   // App icon for a tab: desktop entry -> themed icon, else "" (letter tile).
@@ -307,230 +296,38 @@ Panel {
             }
           }
 
-          Row {
+          // One logo opens the console, which holds the equalizer, the output
+          // levels and the settings. Lit while it is open, softly lit while the
+          // equalizer is shaping the output.
+          Rectangle {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(6)
+            width: 34
+            height: 34
+            radius: 10
+            color: root.mixerOpen
+              ? (root.bar ? Qt.alpha(root.bar.urgent, 0.25) : "#444444")
+              : (root.mixerOn ? (root.bar ? Qt.alpha(root.bar.urgent, 0.15) : "#333333") : "transparent")
+            scale: logoHover.containsMouse ? (logoHover.pressed ? 0.9 : 1.15) : 1
+            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
-            Rectangle {
-              // Sound mixer: lit while it is shaping the output, brighter while
-              // its console is open.
-              width: 34
-              height: 34
-              radius: 10
-              color: root.mixerOpen
-                ? (root.bar ? Qt.alpha(root.bar.urgent, 0.25) : "#444444")
-                : (root.mixerOn ? (root.bar ? Qt.alpha(root.bar.urgent, 0.15) : "#333333") : "transparent")
-              scale: mixerHover.containsMouse ? (mixerHover.pressed ? 0.9 : 1.15) : 1
-              Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-
-              Text {
-                textFormat: Text.PlainText
-                anchors.centerIn: parent
-                // md-equalizer
-                text: "\u{F0EA2}"
-                font.pixelSize: 18
-                color: root.ink
-              }
-
-              MouseArea {
-                id: mixerHover
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                  root.settingsOpen = false
-                  if (root.hostWidget) root.hostWidget.openMixer()
-                }
-              }
+            Image {
+              anchors.centerIn: parent
+              width: 24
+              height: 24
+              source: "assets/logo.png"
+              fillMode: Image.PreserveAspectFit
+              smooth: true
+              asynchronous: true
+              opacity: logoHover.containsMouse || root.mixerOpen || root.mixerOn ? 1 : 0.75
             }
 
-            Rectangle {
-              width: 34
-              height: 34
-              radius: 10
-              color: root.settingsOpen
-                ? (root.bar ? Qt.alpha(root.bar.urgent, 0.25) : "#444444")
-                : "transparent"
-              scale: gearHover.containsMouse ? (gearHover.pressed ? 0.9 : 1.15) : 1
-              Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-
-              Text {
-                textFormat: Text.PlainText
-                anchors.centerIn: parent
-                text: "󰒓"
-                font.pixelSize: 18
-                color: root.ink
-              }
-
-              MouseArea {
-                id: gearHover
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.settingsOpen = !root.settingsOpen
-              }
-            }
-          }
-        }
-
-        // ---- settings popup: one option, bar look ----
-        Rectangle {
-          width: parent.width
-          height: settingsCol.implicitHeight + Style.space(16)
-          radius: Style.space(10)
-          visible: root.settingsOpen
-          color: root.bar ? Qt.alpha(root.bar.barForeground, 0.07) : "#222222"
-
-          Column {
-            id: settingsCol
-            anchors.fill: parent
-            anchors.margins: Style.space(8)
-            spacing: Style.space(8)
-
-            Text {
-              textFormat: Text.PlainText
-              text: "Bar look"
-              color: root.ink
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.body
-              font.bold: true
-            }
-
-            // Segmented switch: live cava bars or the song name.
-            Row {
-              width: parent.width
-              spacing: Style.space(6)
-              readonly property string mode: root.hostWidget ? String(root.hostWidget.setting("barMode", "cava")) : "cava"
-
-              Repeater {
-                model: [
-                  { key: "cava", label: "Cava bars" },
-                  { key: "song", label: "Song name" }
-                ]
-
-                delegate: Rectangle {
-                  required property var modelData
-                  readonly property bool picked: parent.mode === modelData.key
-                  width: (settingsCol.width - 16 - 6) / 2
-                  height: 34
-                  radius: 9
-                  color: picked
-                    ? (root.bar ? root.bar.urgent : "#e58aa5")
-                    : (root.bar ? Qt.alpha(root.bar.barForeground, 0.12) : "#333333")
-
-                  Text {
-                    textFormat: Text.PlainText
-                    anchors.centerIn: parent
-                    text: modelData.label
-                    color: picked ? (root.bar ? root.bar.background : "white") : root.ink
-                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                    font.pixelSize: Style.font.body
-                    font.bold: picked
-                  }
-
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.saveSetting("barMode", modelData.key)
-                  }
-                }
-              }
-            }
-
-            // Track-change toast switch. Takes effect immediately:
-            // the watcher reads the setting live, no restart involved.
-            Row {
-              width: parent.width
-              spacing: Style.space(8)
-
-              Text {
-                textFormat: Text.PlainText
-                anchors.verticalCenter: parent.verticalCenter
-                width: parent.width - 52
-                text: "Track toast"
-                color: root.ink
-                opacity: 0.8
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.body
-                elide: Text.ElideRight
-              }
-
-              Rectangle {
-                anchors.verticalCenter: parent.verticalCenter
-                width: 44
-                height: 24
-                radius: 12
-                property bool on: root.hostWidget ? !!root.hostWidget.setting("toast", true) : true
-                color: on ? (root.bar ? root.bar.urgent : "#e58aa5") : (root.bar ? Qt.alpha(root.bar.barForeground, 0.2) : "#555555")
-
-                Rectangle {
-                  width: 18
-                  height: 18
-                  radius: 9
-                  anchors.verticalCenter: parent.verticalCenter
-                  x: parent.on ? parent.width - width - 3 : 3
-                  color: "white"
-                  Behavior on x { NumberAnimation { duration: 120 } }
-                }
-
-                MouseArea {
-                  anchors.fill: parent
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.saveSetting("toast", !parent.on)
-                }
-              }
-            }
-
-            // Toast spot: under the bar icon, or top-center under the
-            // clock. The toast reads it live, so it moves on click.
-            Text {
-              textFormat: Text.PlainText
-              text: "Toast spot"
-              color: root.ink
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.body
-              font.bold: true
-            }
-
-            Row {
-              width: parent.width
-              spacing: Style.space(6)
-              readonly property string mode: root.hostWidget ? String(root.hostWidget.setting("toastPos", "icon")) : "icon"
-
-              Repeater {
-                model: [
-                  { key: "icon", label: "Near icon" },
-                  { key: "center", label: "Top center" }
-                ]
-
-                delegate: Rectangle {
-                  required property var modelData
-                  readonly property bool picked: parent.mode === modelData.key
-                  width: (settingsCol.width - 16 - 6) / 2
-                  height: 34
-                  radius: 9
-                  color: picked
-                    ? (root.bar ? root.bar.urgent : "#e58aa5")
-                    : (root.bar ? Qt.alpha(root.bar.barForeground, 0.12) : "#333333")
-
-                  Text {
-                    textFormat: Text.PlainText
-                    anchors.centerIn: parent
-                    text: modelData.label
-                    color: picked ? (root.bar ? root.bar.background : "white") : root.ink
-                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                    font.pixelSize: Style.font.body
-                    font.bold: picked
-                  }
-
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.saveSetting("toastPos", modelData.key)
-                  }
-                }
-              }
+            MouseArea {
+              id: logoHover
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: if (root.hostWidget) root.hostWidget.openMixer()
             }
           }
         }
