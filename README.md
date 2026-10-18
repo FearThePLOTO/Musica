@@ -24,8 +24,8 @@ anything else that exposes the standard Linux media interface.
   click raises the player app
 - **Sound console:** the logo in the card opens a floating window with three
   tabs: a system-wide 10-band equalizer (six use modes, the eight Winamp
-  classics, and a curve you hear while you drag it), a level per output device
-  from 0 to 150%, and the plugin's settings
+  classics, and a curve you hear while you drag it), a 0-150% level for every
+  output device and every app playing into it, and the plugin's settings
 - **Keybinds** ship in the plugin (`SUPER+ALT+P/N/B/S`), plus direct IPC
 - **Settings** persist to `shell.json`: bar look, toast on/off + spot,
   and every toggle takes effect instantly
@@ -89,13 +89,21 @@ your audio server, and disappears at logout.
   working: the headroom the curve needs is carried by the mixer itself, so
   your volume still drives the real output device.
 
-The **Outputs** tab lists every output device with its own level from 0 to
-150%, the same ceiling Omarchy's own audio panel uses for streams. Click a row
-to make that device the output, right-click its fader to mute it. Raising a
-muted device unmutes it, which is what the volume keys do. When the mixer is
-on it is the default output, so the levels shown are the devices underneath it:
-the same resolution the volume keys make, so the console and your keyboard can
-never disagree about what is loud.
+The **Outputs** tab has a level for everything you can hear, each from 0 to
+150%, which is the same ceiling Omarchy's own audio panel uses. Click a device
+row to make it the output, right-click any fader to mute it, and raising a
+muted one unmutes it, which is what the volume keys do.
+
+- **Devices** are the speakers, headphones and displays you can switch
+  between. When the mixer is on it is the default output, so a row resolves to
+  the device underneath it: the same resolution the volume keys make, so the
+  console and your keyboard can never disagree about what is loud.
+- **Playing now** is each application with a level of its own, so you can pull
+  one voice down without touching the room. The mixer's own output is not
+  listed: that is the processing, not an application.
+
+The list follows what is actually playing, so an app that starts or stops
+appears and leaves on its own.
 
 The **Settings** tab holds what the card used to carry in its own popup: bar
 look, track toast and where the toast lands.
@@ -153,11 +161,11 @@ omarchy plugin remove io.github.feartheploto.musica
 ## Trust
 
 Like every Omarchy shell plugin, Musica runs unsandboxed inside the
-long-lived shell process with your user permissions — read the code
+long-lived shell process with your user permissions, so read the code
 before enabling, as the installer itself warns. It never asks for sudo,
 starts no second Quickshell process, and spawns no more than two helpers:
 `cava` for the visualizer (skipped when not installed or when the bar
-shows the song name instead), and — only while the sound mixer is on — a
+shows the song name instead), and, only while the sound mixer is on, a
 single `pipewire` filter host in a transient user unit, which is what
 plays your audio through the equalizer. The keybind helper only appends
 a marked block to `~/.config/hypr/bindings.lua`; `remove` deletes

@@ -7,9 +7,10 @@
 // the lists for the same reason.
 var MIXER_SINK = "musica_mixer"
 
-// Ceiling for a device level. Past 100% a boosted signal clips in the graph, so
-// this is deliberately not unlimited; Omarchy's own audio panel holds streams to
-// the same 150%.
+// Ceiling for a level. Past 100% a boosted signal clips in the graph, so this is
+// deliberately not unlimited; Omarchy's own audio panel holds streams to the same
+// 150%, and its devices to 100%. Ours runs both to 150% because the point of a
+// level per app is headroom the user asks for by name.
 var MAX_OUTPUT = 1.5
 
 // Every real output device, newest list first. Sinks only: a source is an input,
@@ -24,6 +25,49 @@ function outputSinks(nodes) {
     out.push(n)
   }
   return out
+}
+
+// A playback stream: something playing into the output, which is what a person
+// means by "a voice" -- Spotify, Zen, a browser tab.
+function isPlaybackStream(node) {
+  if (!node || !node.isStream) return false
+  if (node.isSink === true) return true
+  var mediaClass = String(node.type || "")
+  return mediaClass.indexOf("Stream/Output/Audio") !== -1
+    || mediaClass.indexOf("AudioOutStream") !== -1
+    || mediaClass.indexOf("Output") !== -1
+}
+
+// Every application stream, so each one can have its own level. A filter chain's
+// own output is a stream too, but it is the processing rather than an
+// application -- it belongs to the equalizer tab, not here.
+function outputStreams(nodes) {
+  var out = []
+  for (var i = 0; i < (nodes || []).length; i++) {
+    var n = nodes[i]
+    if (!n || !isPlaybackStream(n)) continue
+    var name = String(n.name || "")
+    if (name.indexOf(MIXER_SINK) === 0 || name.indexOf("omarchy_speaker_tuning") === 0) continue
+    if (!n.audio) continue
+    out.push(n)
+  }
+  return out
+}
+
+// What a stream calls itself. PipeWire hands the application's own name, which
+// is the one a person recognizes; the media name is the fallback for the ones
+// that do not set it.
+function streamLabel(node) {
+  if (!node) return "Stream"
+  var p = node.properties || {}
+  var raw = p["application.name"] || p["media.name"] || node.description || node.name || "Stream"
+  return String(raw).trim() || "Stream"
+}
+
+// A stream speaks, so it gets a speaker; muted, a struck-through one. The same
+// pair omarchy's audio panel uses for its own stream rows.
+function streamGlyph(muted) {
+  return muted ? "󰝟" : "󰕾"
 }
 
 // The name PipeWire hands a device is its driver plumbing. What a person would

@@ -25,15 +25,15 @@ BarWidget {
   readonly property bool hasMedia: player !== null && (player.trackTitle || player.trackArtist)
   readonly property bool isPlaying: player ? !!player.isPlaying : false
   readonly property string tip: hasMedia
-    ? (Model.titleOf(player) + (Model.artistOf(player) ? " — " + Model.artistOf(player) : ""))
-    : "Musica — nothing playing"
+    ? (Model.titleOf(player) + (Model.artistOf(player) ? " · " + Model.artistOf(player) : ""))
+    : "Musica, nothing playing"
 
   function selectPlayer(bus) {
     selectedBus = String(bus || "")
   }
 
   // Jump selection to the next known source. Manual only (card `s` key,
-  // keybind, IPC) — never automatic. Every tab is independent.
+  // keybind, IPC), never automatic. Every tab is independent.
   function cycleSource() {
     var tabs = Model.tabPlayers(players)
     if (tabs.length < 2) return

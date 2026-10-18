@@ -24,7 +24,7 @@ Panel {
 
   // Content ink that stays readable on the popup surface on any theme.
   // barForeground belongs to the bar STRIP (light on Everforest) while
-  // the card is dark — built-ins use bar.foreground for panel content.
+  // the card is dark, so built-ins use bar.foreground for panel content.
   readonly property color ink: root.bar ? root.bar.foreground : Color.foreground
 
   readonly property var players: hostWidget ? hostWidget.players : []

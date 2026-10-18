@@ -60,7 +60,7 @@ Item {
   readonly property string statusLine: {
     if (root.problem !== "") return root.problem
     if (root.busy) return "Applying…"
-    if (!root.active) return "Off — audio goes straight to the output"
+    if (!root.active) return "Off: audio goes straight to the output"
     // The poll is the difference between "on" and "on, but the host is gone".
     if (!root.running) return "On · " + Presets.labelFor(root.mode) + " · starting"
     return "On · " + Presets.labelFor(root.mode) + " · every app plays through the mixer"
@@ -71,6 +71,10 @@ Item {
   // the volume keys lands here without the console asking for it.
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
   readonly property var outputs: Model.outputSinks(root.nodes)
+  // Every application playing into the output, each with its own level. This is
+  // the per-app half of the outputs tab: the device says how loud the room is,
+  // a stream says how loud one voice is in it.
+  readonly property var streams: Model.outputStreams(root.nodes)
   readonly property var defaultSink: Pipewire.defaultAudioSink
   readonly property string defaultSinkName: root.defaultSink ? String(root.defaultSink.name || "") : ""
 
@@ -505,7 +509,7 @@ Item {
           }
           }
 
-          // ---- outputs: one level per device ----
+          // ---- outputs: a level per device, and per app ----
           Column {
             width: parent.width
             spacing: Style.space(12)
@@ -513,6 +517,7 @@ Item {
 
             Text {
               textFormat: Text.PlainText
+              width: parent.width
               text: root.mixerHidesDefault
                 ? "Levels land on the device under the mixer"
                 : "Pick an output, then set its level"
@@ -525,111 +530,15 @@ Item {
             Repeater {
               model: root.outputs
 
-              Rectangle {
+              LevelRow {
                 required property var modelData
-
-                id: outputRow
-
-                readonly property bool current: root.isCurrent(outputRow.modelData)
-                readonly property bool muted: outputRow.modelData.audio ? outputRow.modelData.audio.muted : false
-
-                width: parent.width
-                height: Style.space(52)
-                radius: Style.space(12)
-                color: outputRow.current
-                  ? (root.bar ? Qt.alpha(root.bar.urgent, 0.16) : "#3a2f33")
-                  : (root.bar ? Qt.alpha(root.bar.barForeground, 0.06) : "#262626")
-
-                Row {
-                  anchors.left: parent.left
-                  anchors.leftMargin: Style.space(12)
-                  anchors.right: levelSlider.left
-                  anchors.rightMargin: Style.space(10)
-                  anchors.verticalCenter: parent.verticalCenter
-                  spacing: Style.space(10)
-
-                  Text {
-                    textFormat: Text.PlainText
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: Style.space(22)
-                    horizontalAlignment: Text.AlignHCenter
-                    text: Model.outputGlyph(outputRow.modelData)
-                    color: root.ink
-                    opacity: outputRow.muted ? 0.4 : 1
-                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                    font.pixelSize: Style.font.title
-                  }
-
-                  Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    // Capped so a long device name cannot squeeze the fader out
-                    // of the row; the name elides instead.
-                    width: Math.min(parent.width - Style.space(32), Style.space(220))
-                    text: Model.outputLabel(outputRow.modelData)
-                    color: root.ink
-                    opacity: outputRow.muted ? 0.5 : 1
-                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                    font.pixelSize: Style.font.body
-                    font.bold: outputRow.current
-                    elide: Text.ElideRight
-                    maximumLineCount: 1
-                  }
-                }
-
-                // Left of the slider is the pick: this row is the output, the
-                // fader is its loudness.
-                MouseArea {
-                  anchors.left: parent.left
-                  anchors.top: parent.top
-                  anchors.bottom: parent.bottom
-                  anchors.right: levelSlider.left
-                  anchors.rightMargin: Style.space(10)
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.chooseDefault(outputRow.modelData)
-                }
-
-                Text {
-                  id: levelText
-
-                  anchors.right: parent.right
-                  anchors.rightMargin: Style.space(12)
-                  anchors.verticalCenter: parent.verticalCenter
-                  width: Style.space(46)
-                  horizontalAlignment: Text.AlignRight
-                  // The dragged value while dragging, so the number tracks the
-                  // thumb instead of lagging a round trip through PipeWire.
-                  text: (outputRow.modelData.audio
-                    && (levelSlider.dragging ? levelSlider.liveValue : outputRow.modelData.audio.volume) >= 0
-                    ? Math.round(Model.clampOutput(levelSlider.dragging ? levelSlider.liveValue : outputRow.modelData.audio.volume) * 100) : 0) + "%"
-                  color: root.ink
-                  opacity: outputRow.muted ? 0.5 : 0.8
-                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                  font.pixelSize: Style.font.caption
-                  font.bold: outputRow.current
-                }
-
-                PanelSlider {
-                  id: levelSlider
-
-                  // Fills what is left between the name and the number, so the
-                  // row reads as one control at any window width.
-                  anchors.right: levelText.left
-                  anchors.rightMargin: Style.space(12)
-                  anchors.verticalCenter: parent.verticalCenter
-                  width: Math.max(Style.space(120), outputRow.width - levelText.width - Style.space(260))
-                  height: Style.space(24)
-                  minimum: 0
-                  maximum: Model.MAX_OUTPUT
-                  step: 0.01
-                  // A notch at 100%, so the unity mark is findable on a track
-                  // that runs to 150.
-                  tickCount: 4
-                  value: outputRow.modelData.audio ? Model.clampOutput(outputRow.modelData.audio.volume) : 0
-                  opacity: outputRow.muted ? 0.5 : 1
-                  onMoved: function(v) { root.setLevel(outputRow.modelData, v) }
-                  onReleased: function(v) { root.setLevel(outputRow.modelData, v) }
-                  onRightClicked: root.toggleMute(outputRow.modelData)
-                }
+                node: modelData
+                label: Model.outputLabel(modelData)
+                glyph: Model.outputGlyph(modelData)
+                // The output actually playing, which with the mixer on is the
+                // device underneath it rather than the mix itself.
+                highlighted: root.isCurrent(modelData)
+                onPick: root.chooseDefault(modelData)
               }
             }
 
@@ -637,7 +546,6 @@ Item {
               textFormat: Text.PlainText
               width: parent.width
               visible: root.outputs.length === 0
-                || root.outputs.every(function(n) { return !n.ready })
               text: "Waiting for audio devices…"
               color: root.ink
               opacity: 0.6
@@ -645,11 +553,37 @@ Item {
               font.pixelSize: Style.font.body
             }
 
+            // ---- what is playing: a level per app ----
+            Text {
+              textFormat: Text.PlainText
+              width: parent.width
+              visible: root.streams.length > 0
+              text: "Playing now"
+              color: root.ink
+              opacity: 0.6
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            Repeater {
+              model: root.streams
+
+              LevelRow {
+                required property var modelData
+                node: modelData
+                label: Model.streamLabel(modelData)
+                glyph: Model.streamGlyph(modelData.audio ? modelData.audio.muted : false)
+                // An app is never "the output", so nothing highlights and no row
+                // is a switch: the fader is the whole control.
+              }
+            }
+
             // 0% and 150% both show up as a level, so the range is stated rather
             // than left to be discovered by clipping.
             Text {
               textFormat: Text.PlainText
-              text: "Up to 150% — past 100% a loud master can clip"
+              text: "Up to 150%. Past 100% a loud master can clip"
               color: root.ink
               opacity: 0.45
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -808,6 +742,124 @@ Item {
           }
         }
       }
+    }
+  }
+
+  // One row for anything with a level: an output device, or an app playing into
+  // it. Same shape either way, because the control is the same -- only a device
+  // row doubles as the switch that makes it the output.
+  component LevelRow: Rectangle {
+    id: level
+
+    required property var node
+    property string label: ""
+    property string glyph: ""
+    // The row that is currently the output, drawn lit and bold.
+    property bool highlighted: false
+    // Runs when the row itself is clicked. Empty for an app, which is not a
+    // candidate for anything but its own level.
+    property var onPick: null
+
+    readonly property bool muted: level.node && level.node.audio ? level.node.audio.muted : false
+    readonly property real shown: levelSlider.dragging
+      ? levelSlider.liveValue
+      : (level.node && level.node.audio ? Model.clampOutput(level.node.audio.volume) : 0)
+
+    width: parent ? parent.width : 0
+    height: Style.space(52)
+    radius: Style.space(12)
+    color: level.highlighted
+      ? (root.bar ? Qt.alpha(root.bar.urgent, 0.16) : "#3a2f33")
+      : (root.bar ? Qt.alpha(root.bar.barForeground, 0.06) : "#262626")
+
+    Row {
+      anchors.left: parent.left
+      anchors.leftMargin: Style.space(12)
+      anchors.right: levelSlider.left
+      anchors.rightMargin: Style.space(10)
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(10)
+
+      Text {
+        textFormat: Text.PlainText
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(22)
+        horizontalAlignment: Text.AlignHCenter
+        text: level.glyph
+        color: root.ink
+        opacity: level.muted ? 0.4 : 1
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.title
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        // Capped so a long name cannot squeeze the fader out of the row; the
+        // name elides instead.
+        width: Math.min(parent.width - Style.space(32), Style.space(220))
+        text: level.label
+        color: root.ink
+        opacity: level.muted ? 0.5 : 1
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.body
+        font.bold: level.highlighted
+        elide: Text.ElideRight
+        maximumLineCount: 1
+      }
+    }
+
+    // Left of the fader is the pick, where there is one: this row is the output,
+    // the fader is its loudness.
+    MouseArea {
+      anchors.left: parent.left
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.right: levelSlider.left
+      anchors.rightMargin: Style.space(10)
+      enabled: level.onPick !== null
+      cursorShape: Qt.PointingHandCursor
+      onClicked: if (level.onPick) level.onPick()
+    }
+
+    Text {
+      id: percent
+
+      anchors.right: parent.right
+      anchors.rightMargin: Style.space(12)
+      anchors.verticalCenter: parent.verticalCenter
+      width: Style.space(46)
+      horizontalAlignment: Text.AlignRight
+      // The dragged value while dragging, so the number tracks the thumb
+      // instead of lagging a round trip through PipeWire.
+      text: Math.round(level.shown * 100) + "%"
+      color: root.ink
+      opacity: level.muted ? 0.5 : 0.8
+      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+      font.pixelSize: Style.font.caption
+      font.bold: level.highlighted
+    }
+
+    PanelSlider {
+      id: levelSlider
+
+      // Fills what is left between the name and the number, so the row reads as
+      // one control at any window width.
+      anchors.right: percent.left
+      anchors.rightMargin: Style.space(12)
+      anchors.verticalCenter: parent.verticalCenter
+      width: Math.max(Style.space(120), level.width - percent.width - Style.space(260))
+      height: Style.space(24)
+      minimum: 0
+      maximum: Model.MAX_OUTPUT
+      step: 0.01
+      // A notch at 100%, so the unity mark is findable on a track that runs to
+      // 150.
+      tickCount: 4
+      value: level.node && level.node.audio ? Model.clampOutput(level.node.audio.volume) : 0
+      opacity: level.muted ? 0.5 : 1
+      onMoved: function(v) { root.setLevel(level.node, v) }
+      onReleased: function(v) { root.setLevel(level.node, v) }
+      onRightClicked: root.toggleMute(level.node)
     }
   }
 }
