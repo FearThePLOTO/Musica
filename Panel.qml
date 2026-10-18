@@ -19,6 +19,10 @@ Panel {
   property var hostWidget: null
   property bool settingsOpen: false
 
+  // The mixer console itself lives in Mixer.qml, owned by the host widget.
+  readonly property bool mixerOpen: root.hostWidget ? root.hostWidget.mixerOpened === true : false
+  readonly property bool mixerOn: root.hostWidget ? root.hostWidget.mixerOn === true : false
+
   // Content ink that stays readable on the popup surface on any theme.
   // barForeground belongs to the bar STRIP (light on Everforest) while
   // the card is dark — built-ins use bar.foreground for panel content.
@@ -303,32 +307,69 @@ Panel {
             }
           }
 
-          Rectangle {
+          Row {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            width: 34
-            height: 34
-            radius: 10
-            color: root.settingsOpen
-              ? (root.bar ? Qt.alpha(root.bar.urgent, 0.25) : "#444444")
-              : "transparent"
-            scale: gearHover.containsMouse ? (gearHover.pressed ? 0.9 : 1.15) : 1
-            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+            spacing: Style.space(6)
 
-            Text {
-              textFormat: Text.PlainText
-              anchors.centerIn: parent
-              text: "󰒓"
-              font.pixelSize: 18
-              color: root.ink
+            Rectangle {
+              // Sound mixer: lit while it is shaping the output, brighter while
+              // its console is open.
+              width: 34
+              height: 34
+              radius: 10
+              color: root.mixerOpen
+                ? (root.bar ? Qt.alpha(root.bar.urgent, 0.25) : "#444444")
+                : (root.mixerOn ? (root.bar ? Qt.alpha(root.bar.urgent, 0.15) : "#333333") : "transparent")
+              scale: mixerHover.containsMouse ? (mixerHover.pressed ? 0.9 : 1.15) : 1
+              Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+
+              Text {
+                textFormat: Text.PlainText
+                anchors.centerIn: parent
+                // md-equalizer
+                text: "\u{F0EA2}"
+                font.pixelSize: 18
+                color: root.ink
+              }
+
+              MouseArea {
+                id: mixerHover
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                  root.settingsOpen = false
+                  if (root.hostWidget) root.hostWidget.openMixer()
+                }
+              }
             }
 
-            MouseArea {
-              id: gearHover
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.settingsOpen = !root.settingsOpen
+            Rectangle {
+              width: 34
+              height: 34
+              radius: 10
+              color: root.settingsOpen
+                ? (root.bar ? Qt.alpha(root.bar.urgent, 0.25) : "#444444")
+                : "transparent"
+              scale: gearHover.containsMouse ? (gearHover.pressed ? 0.9 : 1.15) : 1
+              Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+
+              Text {
+                textFormat: Text.PlainText
+                anchors.centerIn: parent
+                text: "󰒓"
+                font.pixelSize: 18
+                color: root.ink
+              }
+
+              MouseArea {
+                id: gearHover
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.settingsOpen = !root.settingsOpen
+              }
             }
           }
         }

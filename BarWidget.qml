@@ -2,9 +2,11 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Mpris
+import Quickshell.Services.Pipewire
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
+import "Presets.js" as Presets
 
 // Musica bar widget: a live mini-cava spectrum as the bar icon.
 // Talks MPRIS directly (any player: Spotify, browser YouTube, ...).
@@ -84,6 +86,136 @@ BarWidget {
     if (toastLoader.item && typeof toastLoader.item.show === "function") toastLoader.item.show()
   }
 
+  // ---- sound mixer: one system-wide equalizer sink -------------------------
+  // Curves live in Presets.js, the filter graph in scripts/musica-mixer, which
+  // owns the bands, their Q values and the headroom a curve needs. Applying a curve
+  // swaps the graph inside the sink that is already playing, so the console can
+  // commit as a drag settles and every call here is cheap and idempotent.
+  readonly property bool mixerOn: !!root.setting("mixerOn", false)
+  readonly property string mixerMode: Presets.modeKey(root.setting("mixerMode", "normal"))
+  readonly property var mixerCustom: Presets.sanitizeCustom(root.setting("mixerGains", null))
+  readonly property bool mixerOpened: mixerLoader.item ? mixerLoader.item.open === true : false
+  property bool mixerBusy: false
+  property bool mixerRunning: false
+  property string mixerError: ""
+  property var mixerQueue: null
+
+  // Plugin-relative, so a dev copy and an installed copy each resolve their own.
+  readonly property string mixerScript: Qt.resolvedUrl("scripts/musica-mixer").toString().replace(/^file:\/\//, "")
+
+  function mixerGains() {
+    return Presets.gainsFor(root.mixerMode, root.mixerCustom)
+  }
+
+  // Same write as the card's settings popup: this widget's inline shell.json entry.
+  function saveSetting(key, value) {
+    var entry = { id: root.moduleName }
+    var cur = root.settings || {}
+    for (var k in cur) if (k !== "id") entry[k] = cur[k]
+    entry[key] = value
+    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
+      root.bar.shell.updateEntryInline(root.moduleName, entry)
+  }
+
+  // A curve commits as a drag settles, and three writes per commit would rewrite
+  // shell.json several times a second to store what it already holds.
+  function rememberSetting(key, value) {
+    if (JSON.stringify(root.setting(key, null)) === JSON.stringify(value)) return
+    root.saveSetting(key, value)
+  }
+
+  function mixerArgs(mode, gains) {
+    var curve = Presets.gainsFor(mode, gains === undefined || gains === null ? root.mixerCustom : gains)
+    return ["apply"].concat(curve.map(function (g) { return String(g) }))
+  }
+
+  // Apply now and remember it, so the curve you picked is the curve you come
+  // back to after a shell restart.
+  function applyMixer(mode, gains) {
+    if (gains !== undefined && gains !== null) root.rememberSetting("mixerGains", Presets.sanitizeCustom(gains))
+    root.rememberSetting("mixerMode", mode)
+    root.rememberSetting("mixerOn", true)
+    root.runMixer(root.mixerArgs(mode, gains))
+  }
+
+  function stopMixer() {
+    root.rememberSetting("mixerOn", false)
+    root.runMixer(["off"])
+  }
+
+  // One helper run at a time. A newer request replaces a queued one: they all say
+  // "the mixer should be this", so only the last one matters.
+  function runMixer(args) {
+    if (root.mixerScript === "") return
+    if (mixerProc.running) {
+      root.mixerQueue = args
+      return
+    }
+    root.mixerError = ""
+    root.mixerBusy = true
+    mixerProc.command = ["bash", root.mixerScript].concat(args)
+    mixerProc.running = true
+  }
+
+  function refreshMixer() {
+    if (!mixerStatus.running) mixerStatus.running = true
+  }
+
+  // A shell restart or a theme switch must not leave audio in a stale state:
+  // re-apply what was on, and clear what a previous shell left behind.
+  function restoreMixer() {
+    var remembered = root.setting("mixerOn", null)
+    if (remembered === null) return
+    if (remembered) root.runMixer(root.mixerArgs(root.mixerMode))
+    else root.runMixer(["off"])
+  }
+
+  // Switching output -- headphones, HDMI -- has to move the mix with it, or the
+  // equalizer keeps feeding the device it was built for while new streams play
+  // straight past it. Debounced because the signal also fires on every settle of
+  // a switch, and each pass re-reads the default sink.
+  readonly property var defaultSink: Pipewire.defaultAudioSink
+  onDefaultSinkChanged: {
+    if (!root.mixerOn) return
+    var name = root.defaultSink ? String(root.defaultSink.name || "") : ""
+    if (name === "" || name === "musica_mixer") return
+    followSink.restart()
+  }
+
+  Timer {
+    id: followSink
+    interval: 700
+    repeat: false
+    onTriggered: {
+      if (!root.mixerOn) return
+      var name = root.defaultSink ? String(root.defaultSink.name || "") : ""
+      if (name === "" || name === "musica_mixer") return
+      root.runMixer(root.mixerArgs(root.mixerMode))
+    }
+  }
+
+  // Quickshell toplevels are tiled by default, and every window this shell opens
+  // shares one class, so the console can only be recognized by its title. The rule
+  // is registered before the window is shown and again at startup, since a rule
+  // registered after a window maps never reaches it.
+  Process {
+    id: floatMixer
+    command: ["hyprctl", "eval", "if mixer_float_rule then mixer_float_rule:set_enabled(false) end; mixer_float_rule = nil; mixer_float_rule = hl.window_rule({ match = { title = \"^Sound mixer$\" }, float = true, center = true })"]
+  }
+
+  function openMixer() {
+    // The console takes the card's place rather than stacking on it.
+    root.close()
+    // The window maps on the next frame, so the rule has to be in place first.
+    floatMixer.running = true
+    if (mixerLoader.item) mixerLoader.item.open = true
+    root.refreshMixer()
+  }
+
+  function closeMixer() {
+    if (mixerLoader.item) mixerLoader.item.open = false
+  }
+
   // ---- popup shape contract (Bar.findPanelWidget needs open/close/opened) ----
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
 
@@ -92,6 +224,7 @@ BarWidget {
   }
 
   function close() {
+    root.closeMixer()
     if (panelLoader.item) panelLoader.item.close()
   }
 
@@ -119,6 +252,13 @@ BarWidget {
     if (!target) return
     if ("bar" in target) target.bar = root.bar
     if ("anchorItem" in target) target.anchorItem = clickArea
+    if ("hostWidget" in target) target.hostWidget = root
+  }
+
+  function injectMixer() {
+    var target = mixerLoader.item
+    if (!target) return
+    if ("bar" in target) target.bar = root.bar
     if ("hostWidget" in target) target.hostWidget = root
   }
 
@@ -173,6 +313,7 @@ BarWidget {
   onBarChanged: {
     injectPanel()
     injectToast()
+    injectMixer()
   }
   onPlayerChanged: {
     injectPanel()
@@ -201,6 +342,73 @@ BarWidget {
     }
   }
 
+  Loader {
+    id: mixerLoader
+    active: true
+    source: Qt.resolvedUrl("Mixer.qml")
+    visible: false
+    onLoaded: {
+      root.injectMixer()
+      Qt.callLater(root.injectMixer)
+    }
+  }
+
+  Process {
+    id: mixerProc
+    stderr: SplitParser {
+      onRead: function(line) {
+        // The helper's first line is the summary; the rest is detail.
+        var s = String(line).trim()
+        if (s !== "" && root.mixerError === "") root.mixerError = s
+      }
+    }
+    onExited: {
+      root.mixerBusy = false
+      if (root.mixerQueue !== null) {
+        var next = root.mixerQueue
+        root.mixerQueue = null
+        root.runMixer(next)
+      } else {
+        root.refreshMixer()
+      }
+    }
+  }
+
+  Process {
+    id: mixerStatus
+    command: ["bash", root.mixerScript, "status"]
+    stdout: SplitParser {
+      onRead: function(line) {
+        var s = String(line).trim()
+        if (s === "active=yes") root.mixerRunning = true
+        else if (s === "active=no") root.mixerRunning = false
+      }
+    }
+  }
+
+  // Polled only while the console is up: it is the difference between "on" and
+  // "on, but the host is gone".
+  Timer {
+    interval: 1500
+    repeat: true
+    running: root.mixerOpened
+    onTriggered: root.refreshMixer()
+  }
+
+  Timer {
+    id: mixerStartup
+    interval: 1500
+    repeat: false
+    onTriggered: root.restoreMixer()
+  }
+
+  Component.onCompleted: {
+    mixerStartup.start()
+    // Registered here as well as before each open, so the console is floating
+    // the first time it is used rather than only after it has been opened once.
+    floatMixer.running = true
+  }
+
   // Track watcher for the toast: title/artist/play flips re-check the
   // signature. Stays quiet while the card is open or the toast is off.
   Instantiator {
@@ -215,7 +423,8 @@ BarWidget {
   }
 
   // Keybind + media-key surface: `omarchy-shell musica playPause|next|previous`
-  // plus open/close/toggle for the card. See scripts/musica-keybinds.
+  // plus open/close/toggle for the card and mixer for the sound console.
+  // See scripts/musica-keybinds.
   IpcHandler {
     target: "musica"
 
@@ -226,6 +435,7 @@ BarWidget {
     function open(): void { root.open() }
     function close(): void { root.close() }
     function toggle(): void { root.togglePanel() }
+    function mixer(): void { root.openMixer() }
     function ping(): string { return "ok" }
   }
 
