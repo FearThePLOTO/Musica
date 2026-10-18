@@ -1,0 +1,515 @@
+#!/bin/bash
+
+# Musica sound mixer: plays the output through a 10-band equalizer.
+#
+# The sink is a PipeWire filter-chain hosted by its own PipeWire client, the way
+# Omarchy hosts speaker tuning. That host carries a pass-through graph only: the
+# curve itself is loaded into the sink's converter as a filter graph and replaced
+# in place on every change, so a mode click or a fader move is audible right away
+# -- no gap, no stream moved, no reconnect. The config is written to the session
+# runtime dir and the host runs as a transient unit, so nothing is installed and
+# nothing survives logout.
+#
+# Modes are not known here: the caller passes ten band gains in dB and this
+# script renders exactly those, so the preset table lives in one place.
+#
+#   musica-mixer apply <g1> ... <g10>
+#   musica-mixer off
+#   musica-mixer status
+#   musica-mixer selftest
+#
+# The preamp a curve needs is computed here, from the curve, so nothing outside
+# has to know about the bands, their Q values or the headroom they cost.
+
+set -uo pipefail
+
+runtime="${XDG_RUNTIME_DIR:-/tmp}/musica"
+conf_name="musica-mixer.conf"
+conf="$runtime/$conf_name"
+target_file="$runtime/target"
+unit="musica-mixer.service"
+sink_name="musica_mixer"
+
+# The graphic-EQ grid Winamp used, which the presets are specified on. This list
+# and the Q values are the audio contract of the mixer: the UI passes gains and
+# nothing else, so there is one place where the curve is defined.
+bands=(60 170 310 600 1000 3000 6000 12000 14000 16000)
+# A band is as wide as the gap to its neighbour, which is how a graphic
+# equalizer behaves: 1.4 for the bands about an octave apart, and 4.3 for the top
+# three, which sit a third of an octave apart. Widening those three instead makes
+# them add up into one very large treble boost.
+qs=(1.4 1.4 1.4 1.4 1.4 1.4 1.4 4.3 4.3 4.3)
+
+note() { printf '%s\n' "$*"; }
+fail() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------- system facts
+
+sink_names() { pactl list sinks short 2>/dev/null | awk '{print $2}'; }
+sink_present() { sink_names | grep -qx "$sink_name"; }
+sinks_contain() { [[ -n ${1:-} ]] && sink_names | grep -qx "$1"; }
+is_default() { [[ "$(pactl get-default-sink 2>/dev/null)" == "$sink_name" ]]; }
+
+# Only real application streams may be moved. A filter chain's own output is a
+# sink input too, but it carries no application.name, and moving it would rewire
+# the mix into itself.
+app_streams() {
+  pactl list sink-inputs 2>/dev/null | awk '
+    /^Sink Input #/ {id = substr($3, 2)}
+    /application\.name = / {
+      app = $0
+      sub(/.*application\.name = "/, "", app)
+      sub(/"$/, "", app)
+      if (app != "EasyEffects") print id
+    }'
+}
+
+move_apps_to() {
+  local target="$1" id
+  for id in $(app_streams); do
+    pactl move-sink-input "$id" "$target" 2>/dev/null || true
+  done
+}
+
+# The sink our graph output is actually linked to, by index. An unlinked output
+# reads as "-", which is what a missing device looks like.
+linked_sink_id() {
+  pactl list sink-inputs 2>/dev/null | awk '
+    /^Sink Input #/ { id = ""; ours = 0 }
+    /^[[:space:]]+Sink: / { id = $2 }
+    /node\.name = "musica_mixer_output"/ { ours = 1 }
+    ours && id != "" { print id; ours = 0 }'
+}
+
+sink_id_of() { pactl list sinks short 2>/dev/null | awk -v s="$1" '$2 == s { print $1; exit }'; }
+
+# Whether the graph output really feeds the sink it was built for. An unlinked
+# output reads as nothing, which is what a missing device looks like.
+feeds_target() {
+  local want_id
+  want_id="$(sink_id_of "$1")"
+  [[ -n $want_id && "$(linked_sink_id)" == "$want_id" ]]
+}
+
+# The device the mix should feed: the output the user has actually chosen. A DSP
+# sink in between -- Omarchy's speaker tuning -- is fed rather than jumped over,
+# so the two chain instead of one bypassing the other. When the mix is itself the
+# default output there is nothing to read, and what it was last pointed at is the
+# honest answer.
+resolve_target() {
+  local current stored
+  current="$(pactl get-default-sink 2>/dev/null)"
+  if [[ -n $current && $current != "$sink_name" ]]; then
+    printf '%s\n' "$current"
+    return
+  fi
+  stored="$(cat "$target_file" 2>/dev/null)"
+  printf '%s\n' "$stored"
+}
+
+# ------------------------------------------------------------------ pure parts
+
+gains_ok() {
+  [[ $# -eq ${#bands[@]} ]] || return 1
+  local g
+  for g in "$@"; do
+    [[ $g =~ ^-?[0-9]+([.][0-9]+)?$ ]] || return 1
+    awk -v g="$g" 'BEGIN{exit !(g >= -24 && g <= 24)}' || return 1
+  done
+}
+
+# The peak of the whole curve, in dB. Bands are not independent: neighbours add
+# up, and the top three bands are a third of an octave apart, so a curve peaks
+# well above its loudest band (the Laptop preset's loudest band is +8.9 dB and
+# its peak is +10.2 dB). Paying only for the loudest band would clip. Coefficients
+# are the RBJ cookbook peaking EQ, which the real graph matched within about a
+# decibel when its response was measured.
+peak_db() {
+  awk -v gains="$*" -v f0s="60 170 310 600 1000 3000 6000 12000 14000 16000" \
+    -v qs="1.4 1.4 1.4 1.4 1.4 1.4 1.4 4.3 4.3 4.3" -v fs=48000 '
+    function banddb(f, f0, q, gain,   A, w0, w, al, b0, b1, b2, a0, a1, a2, cw, sw, c2, s2, nr, ni, dr, di) {
+      A = 10 ^ (gain / 40)
+      w0 = 2 * 3.141592653589793 * f0 / fs
+      w  = 2 * 3.141592653589793 * f / fs
+      al = sin(w0) / (2 * q)
+      b0 = 1 + al * A; b1 = -2 * cos(w0); b2 = 1 - al * A
+      a0 = 1 + al / A; a1 = -2 * cos(w0); a2 = 1 - al / A
+      cw = cos(w); sw = sin(w); c2 = cos(2 * w); s2 = sin(2 * w)
+      nr = b0 + b1 * cw + b2 * c2
+      ni = -(b1 * sw + b2 * s2)
+      dr = a0 + a1 * cw + a2 * c2
+      di = -(a1 * sw + a2 * s2)
+      return 10 * log((nr * nr + ni * ni) / (dr * dr + di * di)) / log(10)
+    }
+    BEGIN {
+      n = split(gains, g, " "); split(f0s, band, " "); split(qs, q, " ")
+      best = -999
+      for (f = 40; f <= 19000; f *= 1.05) {
+        tot = 0
+        for (i = 1; i <= n; i++) tot += banddb(f, band[i], q[i], g[i])
+        if (tot > best) best = tot
+      }
+      printf "%.2f\n", best
+    }'
+}
+
+# Every boost is paid for up front. The biquad chain has no limiter behind it, so
+# the preamp pulls the whole curve back by its peak: the mix plays at the level of
+# a flat curve instead of clipping.
+preamp_db() {
+  awk -v peak="$(peak_db "$@")" 'BEGIN{ p = -peak; if (p > 0) p = 0; printf "%.2f\n", p }'
+}
+
+# The chain applies the preamp as the sink's own volume, not as a filter node, so
+# that volume keys and the OSD keep resolving through to the real device.
+#
+# pactl's percentage is the cube of the amplitude (50% is -18 dB, not -6), so the
+# curve in dB divides by 60, not 20. Measured across 10%..100% to confirm.
+preamp_percent() {
+  awk -v db="$1" 'BEGIN{
+    p = 10 ^ (db / 60) * 100
+    if (p > 100) p = 100
+    if (p < 1) p = 1
+    printf "%d\n", int(p + 0.5)
+  }'
+}
+
+render_conf() {
+  local target="$1"
+
+  cat <<EOF
+# Musica sound mixer. Rendered on every start; edits here are overwritten.
+#
+# Run as its own PipeWire client so switching a mode does not restart audio:
+#   pipewire -c $conf_name
+context.properties = {
+    log.level = 0
+}
+
+context.spa-libs = {
+    audio.convert.* = audioconvert/libspa-audioconvert
+    support.*       = support/libspa-support
+}
+
+context.modules = [
+    { name = libpipewire-module-rt
+        args = { }
+        flags = [ ifexists nofail ]
+    }
+    { name = libpipewire-module-protocol-native }
+    { name = libpipewire-module-client-node }
+    { name = libpipewire-module-adapter }
+    { name = libpipewire-module-filter-chain
+      args = {
+        node.description = "Sound mixer"
+        media.name       = "Sound mixer"
+
+        filter.graph = {
+          # A pass-through. The curve is deliberately not baked in here: it is
+          # loaded into the sink's converter at runtime (see set_curve), which is
+          # what lets a change land without restarting this host.
+          nodes = [
+            { type = builtin name = l label = copy }
+            { type = builtin name = r label = copy }
+          ]
+          inputs  = [ "l:In" "r:In" ]
+          outputs = [ "l:Out" "r:Out" ]
+        }
+
+        audio.channels = 2
+        audio.position = [ FL FR ]
+
+        capture.props = {
+          node.name        = "$sink_name"
+          node.description = "Sound mixer"
+          node.nick        = "Sound mixer"
+          media.class      = Audio/Sink
+        }
+        playback.props = {
+          # The output of the mix is a movable sink input like any other, so
+          # anything that reroutes every stream to a new output would drag the
+          # processing with it -- onto headphones, or into this sink, which is a
+          # cycle. Pin it.
+          node.name     = "${sink_name}_output"
+          node.passive  = true
+          node.dont-move = true
+          # If the device is not present yet -- the host can start before it is
+          # discovered -- WirePlumber would otherwise link to whatever default
+          # exists, quietly filtering the wrong device while the sink still looks
+          # healthy. Wait for the named target instead. Both are needed: without
+          # linger, WirePlumber destroys the node rather than waiting.
+          node.dont-fallback = true
+          node.linger   = true
+          target.object = "$target"
+        }
+      }
+    }
+]
+EOF
+}
+
+# The audible curve, as the filter graph the sink's converter runs. Same ten
+# bands on Winamp's grid and the same peaking filters the response was measured
+# with; this is the JSON form the filter graph wants.
+curve_graph() {
+  local g i
+  printf '{"nodes":[{"type":"builtin","name":"eq","label":"param_eq","config":{"filters":['
+  for i in "${!bands[@]}"; do
+    g="$1"
+    shift
+    ((i)) && printf ','
+    printf '{"type":"bq_peaking","freq":%s,"gain":%s,"q":%s}' \
+      "${bands[$i]}" "$g" "${qs[$i]}"
+  done
+  printf ']}}],"inputs":["eq:In 1","eq:In 2"],"outputs":["eq:Out 1","eq:Out 2"]}'
+}
+
+# -------------------------------------------------------------------- actions
+
+rollback() {
+  local target="${1:-}"
+  systemctl --user stop "$unit" >/dev/null 2>&1
+  rm -f "$conf"
+  if [[ -n $target ]] && sinks_contain "$target"; then
+    pactl set-default-sink "$target" >/dev/null 2>&1
+    move_apps_to "$target"
+  fi
+}
+
+sink_percent() {
+  pactl get-sink-volume "$sink_name" 2>/dev/null | awk 'NR==1{print $5}' | tr -d '%'
+}
+
+# Swap in a new curve without touching the sink, the streams or the routing.
+#
+# audioconvert keeps its loaded filter graphs by order number, and a new graph at
+# an order that is already in use replaces the one there under the data loop
+# lock. So the same order every time means "replace", and the audio keeps flowing
+# through the same sink while the coefficients change.
+#
+# The graph goes in under the lower of the two preamps: the mixer can only ever
+# dip while the new curve lands, never overshoot the device.
+set_curve() {
+  local json esc out
+  json="$(curve_graph "$@")" || return 1
+  esc="${json//\"/\\\"}"
+  # pw-cli exits 0 whatever happens, so its output is the only verdict.
+  out="$(pw-cli s "$sink_name" Props \
+    "{ params = [ \"audioconvert.filter-graph.1\" \"$esc\" ] }" 2>&1)" || return 1
+  [[ $out != *Error* ]]
+}
+
+# Put a curve on the running sink: the preamp under the graph, then the graph,
+# then the preamp the new curve actually needs. Non-zero if the sink would not
+# take it, which the caller answers for -- a fresh start rolls back, a live
+# change has nothing to undo.
+swap_curve() {
+  local preamp="$1"
+  shift
+  local new_pct cur_pct
+  new_pct="$(preamp_percent "$preamp")"
+  cur_pct="$(sink_percent)"
+  if [[ -z $cur_pct || $cur_pct -gt $new_pct ]]; then
+    pactl set-sink-volume "$sink_name" "$new_pct%" >/dev/null 2>&1 || return 1
+  fi
+  set_curve "$@" || return 1
+  pactl set-sink-volume "$sink_name" "$new_pct%" >/dev/null 2>&1 || return 1
+}
+
+apply() {
+  local gains=("$@") preamp
+  gains_ok "${gains[@]}" ||
+    fail "apply needs ${#bands[@]} band gains in dB, between -24 and 24 (got ${#gains[@]})"
+  preamp="$(preamp_db "${gains[@]}")"
+
+  local target
+  target="$(resolve_target)"
+  if [[ -z $target || $target == "$sink_name" ]]; then
+    fail "no audio output to play through, so there is nothing to filter"
+  fi
+  sinks_contain "$target" || fail "output $target is gone"
+
+  mkdir -p "$runtime" && chmod 700 "$runtime"
+
+  # Two quick clicks must not race two hosts into existence.
+  exec 9>"$runtime/lock"
+  flock 9
+
+  # Healthy means: this host is up, it is the default output, and the graph it is
+  # running feeds the device just resolved. The conf is rendered from that device
+  # and nothing else, so a healthy host is already running what a restart would
+  # build -- which is why a curve change is only a graph to swap, with no sink
+  # replaced, no stream moved and no default sink reset.
+  if systemctl --user is-active --quiet "$unit" && sink_present && is_default &&
+    feeds_target "$target"; then
+    swap_curve "$preamp" "${gains[@]}" ||
+      fail "the mixer is running but would not take the curve"
+    note "Sound mixer on."
+    return 0
+  fi
+
+  local want
+  want="$(mktemp "$runtime/conf.XXXXXX")" || fail "cannot write to $runtime"
+  # Not `$want`: by the time the shell exits, the local is gone.
+  trap 'rm -f "${want:-}"' EXIT
+  render_conf "$target" >"$want"
+  mv -f "$want" "$conf"
+  systemctl --user stop "$unit" >/dev/null 2>&1
+
+  local out
+  if ! out="$(systemd-run --user --unit="${unit%.service}" --collect \
+    --setenv=PIPEWIRE_CONFIG_DIR="$runtime" \
+    --property=Restart=on-failure \
+    pipewire -c "$conf_name" 2>&1)"; then
+    fail "could not start the mixer host: ${out:-unknown error}"
+  fi
+
+  local _
+  for _ in {1..40}; do
+    sink_present && break
+    sleep 0.25
+  done
+  if ! sink_present; then
+    rollback "$target"
+    fail "the mixer sink never appeared, so it was removed. Audio is untouched.
+Check: systemctl --user status $unit"
+  fi
+
+  # Confirm the graph really feeds the device it was built for.
+  for _ in {1..20}; do
+    feeds_target "$target" && break
+    sleep 0.25
+  done
+  if ! feeds_target "$target"; then
+    rollback "$target"
+    fail "the mixer did not link to
+$target, so it was removed rather than left filtering the wrong device."
+  fi
+
+  printf '%s\n' "$target" >"$target_file"
+  # A curve that will not load leaves a mixer with no EQ in it, which looks like
+  # the equalizer is on and doing nothing. Better to hand the output back.
+  if ! swap_curve "$preamp" "${gains[@]}"; then
+    rollback "$target"
+    fail "the mixer would not take the curve, so it was removed. Audio is untouched."
+  fi
+  pactl set-default-sink "$sink_name" >/dev/null 2>&1
+  # A default sink only captures new streams, so anything already playing would
+  # keep bypassing the mix until its app was restarted.
+  move_apps_to "$sink_name"
+
+  note "Sound mixer on."
+}
+
+off() {
+  local target
+  target="$(cat "$target_file" 2>/dev/null)"
+  # Resolve before stopping, while the mix still knows what it feeds.
+  [[ -n $target ]] || target="$(resolve_target)"
+
+  systemctl --user stop "$unit" >/dev/null 2>&1
+  local _
+  for _ in {1..20}; do
+    sink_present || break
+    sleep 0.25
+  done
+  rm -f "$conf" "$target_file"
+
+  if [[ -n $target && $target != "$sink_name" ]] && sinks_contain "$target"; then
+    pactl set-default-sink "$target" >/dev/null 2>&1
+    move_apps_to "$target"
+  fi
+  note "Sound mixer off."
+}
+
+status() {
+  local active=no
+  systemctl --user is-active --quiet "$unit" && active=yes
+  printf 'active=%s\n' "$active"
+  printf 'sink=%s\n' "$(sink_present && echo present || echo absent)"
+  printf 'default=%s\n' "$(is_default && echo yes || echo no)"
+  printf 'target=%s\n' "$(cat "$target_file" 2>/dev/null)"
+}
+
+selftest() {
+  local bad=0 out peak
+
+  gains_ok 0 0 0 0 0 0 0 0 0 0 || { echo "FAIL: flat curve rejected" >&2; bad=1; }
+  gains_ok -12 12 0 -0.5 0 0 0 0 0 0 || { echo "FAIL: in-range curve rejected" >&2; bad=1; }
+  gains_ok 0 0 0 && { echo "FAIL: short gain list accepted" >&2; bad=1; }
+  gains_ok abc 0 0 0 0 0 0 0 0 0 0 && { echo "FAIL: junk gain accepted" >&2; bad=1; }
+  gains_ok 0 0 0 0 0 0 0 0 0 99 && { echo "FAIL: out-of-range gain accepted" >&2; bad=1; }
+
+  [[ "$(preamp_db 0 0 0 0 0 0 0 0 0 0)" == "-0.00" ]] || { echo "FAIL: flat curve wants a preamp" >&2; bad=1; }
+  # one band alone: its own gain, paid back exactly
+  [[ "$(preamp_db 6 0 0 0 0 0 0 0 0 0)" == "-5.99" ]] || { echo "FAIL: single band preamp" >&2; bad=1; }
+  # A real curve peaks above its loudest band, which is the point: the Laptop
+  # preset's loudest band is 8.9 dB and its peak is over 10.
+  peak="$(peak_db 2.7 6.6 3.1 -2.6 -1.9 0.8 2.7 5.8 7.7 8.9)"
+  awk -v p="$peak" 'BEGIN{exit !(p >= 9.5 && p <= 11)}' ||
+    { echo "FAIL: Laptop peak is $peak dB, expected 9.5..11" >&2; bad=1; }
+
+  [[ "$(preamp_percent 0)" == "100" ]] || { echo "FAIL: 0 dB preamp is not unity" >&2; bad=1; }
+  [[ "$(preamp_percent -6.0206)" == "79" ]] || { echo "FAIL: -6 dB preamp is not 79%" >&2; bad=1; }
+  [[ "$(preamp_percent -18.0620)" == "50" ]] || { echo "FAIL: -18 dB preamp is not 50%" >&2; bad=1; }
+  [[ "$(preamp_percent -60)" == "10" ]] || { echo "FAIL: -60 dB preamp is not 10%" >&2; bad=1; }
+  [[ "$(preamp_percent 5)" == "100" ]] || { echo "FAIL: preamp boost not capped" >&2; bad=1; }
+
+  out="$(render_conf some_device)"
+  grep -q 'inputs  = \[ "l:In" "r:In" \]' <<<"$out" || { echo "FAIL: pass-through inputs wrong" >&2; bad=1; }
+  grep -q 'outputs = \[ "l:Out" "r:Out" \]' <<<"$out" || { echo "FAIL: pass-through outputs wrong" >&2; bad=1; }
+  grep -q 'bq_peaking' <<<"$out" && { echo "FAIL: curve baked into the conf" >&2; bad=1; }
+  grep -q 'target.object = "some_device"' <<<"$out" || { echo "FAIL: target not pinned" >&2; bad=1; }
+  grep -q 'node.name     = "musica_mixer_output"' <<<"$out" || { echo "FAIL: output not prefixed with the sink name" >&2; bad=1; }
+  grep -q 'media.class      = Audio/Sink' <<<"$out" || { echo "FAIL: not a sink" >&2; bad=1; }
+
+  out="$(curve_graph 1 -2 3 0 0 0 0 0 0 0)"
+  [[ $(grep -o bq_peaking <<<"$out" | wc -l) -eq 10 ]] || { echo "FAIL: not ten bands in the curve" >&2; bad=1; }
+  grep -q '"freq":60,"gain":1,"q":1.4' <<<"$out" || { echo "FAIL: first band wrong" >&2; bad=1; }
+  grep -q '"freq":16000,"gain":0,"q":4.3' <<<"$out" || { echo "FAIL: last band wrong" >&2; bad=1; }
+  grep -q '"inputs":\["eq:In 1","eq:In 2"\]' <<<"$out" || { echo "FAIL: curve inputs wrong" >&2; bad=1; }
+  # A malformed graph would load nothing and leave the sink silent of EQ, with
+  # nothing reporting an error, so the exact string is checked, not just its shape.
+  python3 -c 'import json,sys
+g = json.loads(sys.argv[1])
+b = g["nodes"][0]["config"]["filters"]
+assert len(b) == 10, b
+assert [x["freq"] for x in b] == [60,170,310,600,1000,3000,6000,12000,14000,16000], b
+assert [x["gain"] for x in b] == [1,-2,3,0,0,0,0,0,0,0], b
+assert [x["q"] for x in b] == [1.4]*7+[4.3]*3, b
+assert g["inputs"] == ["eq:In 1","eq:In 2"] and g["outputs"] == ["eq:Out 1","eq:Out 2"], g
+' "$out" || { echo "FAIL: the curve is not the graph it must be" >&2; bad=1; }
+
+  ((bad)) && return 1
+  echo "ok"
+}
+
+usage() {
+  cat >&2 <<EOF
+Usage: musica-mixer <apply|off|status|selftest>
+  apply <g1> ... <g10>   ten band gains in dB, -24..24
+  off                    bypass and restore the output
+  status                 key=value state, for the UI
+  selftest               check the renderer, the preamp and the guards
+EOF
+}
+
+# Sourced (by the test bench) only defines the helpers; run directly it acts.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  case "${1:-status}" in
+    apply)
+      shift
+      apply "$@"
+      ;;
+    off) off ;;
+    status) status ;;
+    selftest) selftest ;;
+    *)
+      usage
+      exit 2
+      ;;
+  esac
+fi
