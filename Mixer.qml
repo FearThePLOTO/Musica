@@ -1,22 +1,35 @@
 import QtQuick
 import Quickshell
+import Quickshell.Services.Pipewire
 import qs.Commons
 import qs.Ui
+import "Model.js" as Model
 import "Presets.js" as Presets
 
-// Musica sound mixer: a system-wide equalizer in a small floating window, so it
-// behaves like any app window -- switchable with the window manager instead of
-// covering the screen.
+// Musica sound console: a system-wide equalizer and per-output levels in one
+// small floating window, so it behaves like any app window -- switchable with
+// the window manager instead of covering the screen.
 //
-// Applying a curve swaps the filter graph inside the running sink, which costs
-// nothing audible. A drag still edits locally and commits as it settles, so the
-// curve being heard is the one the user is still shaping.
+// Three tabs, one per job: the equalizer, the output devices, and the plugin's
+// settings. Applying a curve swaps the filter graph inside the running sink,
+// which costs nothing audible, so a drag commits as it settles and the curve
+// being heard is the one the user is still shaping.
 Item {
   id: root
 
   property var bar: null
   property var hostWidget: null
   property bool open: false
+
+  // Which tab is showing. Kept for the life of the window rather than stored:
+  // it is a place in the UI, not a preference about the user.
+  property string tab: "mixer"
+
+  readonly property var tabs: [
+    { key: "mixer", label: "Equalizer" },
+    { key: "outputs", label: "Outputs" },
+    { key: "settings", label: "Settings" }
+  ]
 
   readonly property color ink: root.bar ? root.bar.foreground : Color.foreground
   readonly property color accent: root.bar ? root.bar.urgent : Color.accent
@@ -47,10 +60,91 @@ Item {
   readonly property string statusLine: {
     if (root.problem !== "") return root.problem
     if (root.busy) return "Applying…"
-    if (!root.active) return "Off — audio goes straight to the output"
+    if (!root.active) return "Off: audio goes straight to the output"
     // The poll is the difference between "on" and "on, but the host is gone".
     if (!root.running) return "On · " + Presets.labelFor(root.mode) + " · starting"
     return "On · " + Presets.labelFor(root.mode) + " · every app plays through the mixer"
+  }
+
+  // ---- outputs: one level per device --------------------------------------
+  // Read live from the PipeWire service rather than polled, so a level moved by
+  // the volume keys lands here without the console asking for it.
+  readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
+  readonly property var outputs: Model.outputSinks(root.nodes)
+  // Every application playing into the output, each with its own level. This is
+  // the per-app half of the outputs tab: the device says how loud the room is,
+  // a stream says how loud one voice is in it.
+  readonly property var streams: Model.outputStreams(root.nodes)
+  readonly property var defaultSink: Pipewire.defaultAudioSink
+  readonly property string defaultSinkName: root.defaultSink ? String(root.defaultSink.name || "") : ""
+
+  // Which device the level actually lands on. With the mixer on, the default
+  // output is the mix itself, so loudness lives on the device underneath it --
+  // the same resolution Omarchy's volume keys make, so the console and the keys
+  // can never disagree about what is loud.
+  function physicalSinkFor(name) {
+    if (name === "" || name === Model.MIXER_SINK) {
+      if (root.hostWidget && typeof root.hostWidget.mixerTarget === "function")
+        return root.hostWidget.mixerTarget()
+      return ""
+    }
+    return name
+  }
+
+  readonly property bool mixerHidesDefault: root.active && root.defaultSinkName === Model.MIXER_SINK
+
+  function isCurrent(node) {
+    if (!node) return false
+    if (root.mixerHidesDefault) {
+      var target = root.physicalSinkFor(root.defaultSinkName)
+      return target !== "" && String(node.name || "") === target
+    }
+    return String(node.name || "") === root.defaultSinkName
+  }
+
+  function percent(node) {
+    if (!node || !node.audio) return 0
+    return Math.round(Model.clampOutput(node.audio.volume) * 100)
+  }
+
+  // Unmute on raise, so dragging a muted device up is not silent: the same rule
+  // omarchy-audio-output-volume follows on a volume key.
+  function setLevel(node, value) {
+    if (!node || !node.audio) return
+    node.audio.volume = Model.clampOutput(value)
+    if (node.audio.volume > 0 && node.audio.muted) node.audio.muted = false
+  }
+
+  function toggleMute(node) {
+    if (!node || !node.audio) return
+    node.audio.muted = !node.audio.muted
+  }
+
+  function chooseDefault(node) {
+    if (!node || !node.audio) return
+    Pipewire.preferredDefaultAudioSink = node
+    if (node.id !== undefined && node.name) {
+      Quickshell.execDetached([
+        "omarchy-audio-output-set-default",
+        String(node.id),
+        String(node.name)
+      ])
+    }
+    // Naming it here too keeps the mixer following this switch when it is on.
+    if (root.hostWidget && typeof root.hostWidget.rememberMixerTarget === "function")
+      root.hostWidget.rememberMixerTarget(String(node.name || ""))
+  }
+
+  // Settings live on the bar widget's inline shell.json entry, so the console
+  // reads and writes them through the host rather than keeping its own copy.
+  function setting(key, fallback) {
+    if (!root.hostWidget || typeof root.hostWidget.setting !== "function") return fallback
+    return root.hostWidget.setting(key, fallback)
+  }
+
+  function saveSetting(key, value) {
+    if (!root.hostWidget || typeof root.hostWidget.rememberSetting !== "function") return
+    root.hostWidget.rememberSetting(key, value)
   }
 
   function choose(key) {
@@ -123,7 +217,8 @@ Item {
     color: Qt.rgba(root.surface.r, root.surface.g, root.surface.b, 1)
     implicitWidth: Style.space(720)
     implicitHeight: body.implicitHeight + Style.space(32)
-    minimumSize: Qt.size(Style.space(520), Style.space(420))
+    // Tall enough for the faders, so switching tabs does not jump the window.
+    minimumSize: Qt.size(Style.space(520), Style.space(560))
 
     FocusScope {
       id: keyCatcher
@@ -147,7 +242,7 @@ Item {
           anchors.margins: Style.space(16)
           spacing: Style.space(12)
 
-          // ---- title ----
+          // ---- title + close ----
           Row {
             width: parent.width
             spacing: Style.space(10)
@@ -168,7 +263,10 @@ Item {
               Text {
                 textFormat: Text.PlainText
                 width: parent.width
-                text: root.statusLine
+                // The status is about the equalizer, so the other tabs leave it
+                // blank rather than hidden: the row still holds its height and
+                // the tab bar does not jump when the tab changes.
+                text: root.tab === "mixer" ? root.statusLine : ""
                 color: root.ink
                 opacity: root.problem !== "" ? 0.95 : 0.6
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -204,6 +302,36 @@ Item {
               }
             }
           }
+
+          // ---- tabs: which job this window is doing ----
+          Row {
+            width: parent.width
+            spacing: Style.space(6)
+
+            Repeater {
+              model: root.tabs
+
+              Button {
+                required property var modelData
+                width: (tabRow.width - Style.space(6) * (root.tabs.length - 1)) / root.tabs.length
+                text: modelData.label
+                bordered: true
+                selected: root.tab === modelData.key
+                foreground: root.ink
+                accent: root.accent
+                fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+                onClicked: root.tab = modelData.key
+              }
+            }
+
+            id: tabRow
+          }
+
+          // ---- equalizer ----
+          Column {
+            width: parent.width
+            spacing: Style.space(12)
+            visible: root.tab === "mixer"
 
           // ---- modes ----
           Column {
@@ -379,8 +507,359 @@ Item {
               onClicked: root.reset()
             }
           }
+          }
+
+          // ---- outputs: a level per device, and per app ----
+          Column {
+            width: parent.width
+            spacing: Style.space(12)
+            visible: root.tab === "outputs"
+
+            Text {
+              textFormat: Text.PlainText
+              width: parent.width
+              text: root.mixerHidesDefault
+                ? "Levels land on the device under the mixer"
+                : "Pick an output, then set its level"
+              color: root.ink
+              opacity: 0.6
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+            }
+
+            Repeater {
+              model: root.outputs
+
+              LevelRow {
+                required property var modelData
+                node: modelData
+                label: Model.outputLabel(modelData)
+                glyph: Model.outputGlyph(modelData)
+                // The output actually playing, which with the mixer on is the
+                // device underneath it rather than the mix itself.
+                highlighted: root.isCurrent(modelData)
+                onPick: root.chooseDefault(modelData)
+              }
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              width: parent.width
+              visible: root.outputs.length === 0
+              text: "Waiting for audio devices…"
+              color: root.ink
+              opacity: 0.6
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.body
+            }
+
+            // ---- what is playing: a level per app ----
+            Text {
+              textFormat: Text.PlainText
+              width: parent.width
+              visible: root.streams.length > 0
+              text: "Playing now"
+              color: root.ink
+              opacity: 0.6
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            Repeater {
+              model: root.streams
+
+              LevelRow {
+                required property var modelData
+                node: modelData
+                label: Model.streamLabel(modelData)
+                glyph: Model.streamGlyph(modelData.audio ? modelData.audio.muted : false)
+                // An app is never "the output", so nothing highlights and no row
+                // is a switch: the fader is the whole control.
+              }
+            }
+
+            // 0% and 150% both show up as a level, so the range is stated rather
+            // than left to be discovered by clipping.
+            Text {
+              textFormat: Text.PlainText
+              text: "Up to 150%. Past 100% a loud master can clip"
+              color: root.ink
+              opacity: 0.45
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+              width: parent.width
+            }
+          }
+
+          // ---- settings ----
+          Column {
+            width: parent.width
+            spacing: Style.space(12)
+            visible: root.tab === "settings"
+
+            // Segmented switch: live cava bars or the song name.
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Text {
+                textFormat: Text.PlainText
+                text: "Bar look"
+                color: root.ink
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.body
+                font.bold: true
+              }
+
+              Row {
+                width: parent.width
+                spacing: Style.space(6)
+                readonly property string mode: root.setting("barMode", "cava")
+
+                Repeater {
+                  model: [
+                    { key: "cava", label: "Cava bars" },
+                    { key: "song", label: "Song name" }
+                  ]
+
+                  Button {
+                    required property var modelData
+                    width: (parent.width - Style.space(6)) / 2
+                    text: modelData.label
+                    bordered: true
+                    selected: parent.mode === modelData.key
+                    foreground: root.ink
+                    accent: root.accent
+                    fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+                    onClicked: root.saveSetting("barMode", modelData.key)
+                  }
+                }
+              }
+            }
+
+            // Track-change toast. Takes effect immediately: the watcher reads
+            // the setting live, no restart involved.
+            Rectangle {
+              width: parent.width
+              height: Style.space(52)
+              radius: Style.space(12)
+              color: root.bar ? Qt.alpha(root.bar.barForeground, 0.06) : "#262626"
+
+              Text {
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(12)
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - Style.space(70)
+                text: "Track toast"
+                color: root.ink
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.body
+                elide: Text.ElideRight
+                maximumLineCount: 1
+              }
+
+              Toggle {
+                id: toastToggle
+
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(12)
+                anchors.verticalCenter: parent.verticalCenter
+                width: Style.space(44)
+                height: Style.space(26)
+                label: ""
+                description: ""
+                checked: !!root.setting("toast", true)
+                foreground: root.ink
+                accent: root.accent
+                // The row is clickable too, but only outside the switch: the
+                // switch has its own click, and an overlay would swallow it.
+                onClicked: root.saveSetting("toast", !root.setting("toast", true))
+              }
+
+              MouseArea {
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.right: toastToggle.left
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.saveSetting("toast", !root.setting("toast", true))
+              }
+            }
+
+            // Toast spot: under the bar icon, or top-center under the clock.
+            // The toast reads it live, so it moves on click.
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Text {
+                textFormat: Text.PlainText
+                text: "Toast spot"
+                color: root.ink
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.body
+                font.bold: true
+              }
+
+              Row {
+                width: parent.width
+                spacing: Style.space(6)
+                readonly property string mode: root.setting("toastPos", "icon")
+
+                Repeater {
+                  model: [
+                    { key: "icon", label: "Near icon" },
+                    { key: "center", label: "Top center" }
+                  ]
+
+                  Button {
+                    required property var modelData
+                    width: (parent.width - Style.space(6)) / 2
+                    text: modelData.label
+                    bordered: true
+                    selected: parent.mode === modelData.key
+                    foreground: root.ink
+                    accent: root.accent
+                    fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+                    onClicked: root.saveSetting("toastPos", modelData.key)
+                  }
+                }
+              }
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              text: "Everything here takes effect immediately"
+              color: root.ink
+              opacity: 0.45
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+              width: parent.width
+            }
+          }
         }
       }
+    }
+  }
+
+  // One row for anything with a level: an output device, or an app playing into
+  // it. Same shape either way, because the control is the same -- only a device
+  // row doubles as the switch that makes it the output.
+  component LevelRow: Rectangle {
+    id: level
+
+    required property var node
+    property string label: ""
+    property string glyph: ""
+    // The row that is currently the output, drawn lit and bold.
+    property bool highlighted: false
+    // Runs when the row itself is clicked. Empty for an app, which is not a
+    // candidate for anything but its own level.
+    property var onPick: null
+
+    readonly property bool muted: level.node && level.node.audio ? level.node.audio.muted : false
+    readonly property real shown: levelSlider.dragging
+      ? levelSlider.liveValue
+      : (level.node && level.node.audio ? Model.clampOutput(level.node.audio.volume) : 0)
+
+    width: parent ? parent.width : 0
+    height: Style.space(52)
+    radius: Style.space(12)
+    color: level.highlighted
+      ? (root.bar ? Qt.alpha(root.bar.urgent, 0.16) : "#3a2f33")
+      : (root.bar ? Qt.alpha(root.bar.barForeground, 0.06) : "#262626")
+
+    Row {
+      anchors.left: parent.left
+      anchors.leftMargin: Style.space(12)
+      anchors.right: levelSlider.left
+      anchors.rightMargin: Style.space(10)
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(10)
+
+      Text {
+        textFormat: Text.PlainText
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(22)
+        horizontalAlignment: Text.AlignHCenter
+        text: level.glyph
+        color: root.ink
+        opacity: level.muted ? 0.4 : 1
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.title
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        // Capped so a long name cannot squeeze the fader out of the row; the
+        // name elides instead.
+        width: Math.min(parent.width - Style.space(32), Style.space(220))
+        text: level.label
+        color: root.ink
+        opacity: level.muted ? 0.5 : 1
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.body
+        font.bold: level.highlighted
+        elide: Text.ElideRight
+        maximumLineCount: 1
+      }
+    }
+
+    // Left of the fader is the pick, where there is one: this row is the output,
+    // the fader is its loudness.
+    MouseArea {
+      anchors.left: parent.left
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.right: levelSlider.left
+      anchors.rightMargin: Style.space(10)
+      enabled: level.onPick !== null
+      cursorShape: Qt.PointingHandCursor
+      onClicked: if (level.onPick) level.onPick()
+    }
+
+    Text {
+      id: percent
+
+      anchors.right: parent.right
+      anchors.rightMargin: Style.space(12)
+      anchors.verticalCenter: parent.verticalCenter
+      width: Style.space(46)
+      horizontalAlignment: Text.AlignRight
+      // The dragged value while dragging, so the number tracks the thumb
+      // instead of lagging a round trip through PipeWire.
+      text: Math.round(level.shown * 100) + "%"
+      color: root.ink
+      opacity: level.muted ? 0.5 : 0.8
+      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+      font.pixelSize: Style.font.caption
+      font.bold: level.highlighted
+    }
+
+    PanelSlider {
+      id: levelSlider
+
+      // Fills what is left between the name and the number, so the row reads as
+      // one control at any window width.
+      anchors.right: percent.left
+      anchors.rightMargin: Style.space(12)
+      anchors.verticalCenter: parent.verticalCenter
+      width: Math.max(Style.space(120), level.width - percent.width - Style.space(260))
+      height: Style.space(24)
+      minimum: 0
+      maximum: Model.MAX_OUTPUT
+      step: 0.01
+      // A notch at 100%, so the unity mark is findable on a track that runs to
+      // 150.
+      tickCount: 4
+      value: level.node && level.node.audio ? Model.clampOutput(level.node.audio.volume) : 0
+      opacity: level.muted ? 0.5 : 1
+      onMoved: function(v) { root.setLevel(level.node, v) }
+      onReleased: function(v) { root.setLevel(level.node, v) }
+      onRightClicked: root.toggleMute(level.node)
     }
   }
 }

@@ -7,9 +7,9 @@ import "Model.js" as Model
 
 // Musica track-change toast: passive overlay, deliberately NOT a
 // KeyboardPanel. KeyboardPanels grab exclusive keyboard focus and eat
-// outside clicks for dismissal — correct for the card, a screen freeze
-// for a toast. This is a bare PanelWindow: no focus ever, click-through
-// everywhere except the card itself (mask), zero input impact.
+// outside clicks for dismissal, which is right for the card and a screen
+// freeze for a toast. This is a bare PanelWindow: no focus ever,
+// click-through everywhere except the card itself (mask), zero input impact.
 Item {
   id: root
 
