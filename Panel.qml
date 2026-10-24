@@ -54,35 +54,33 @@ Panel {
   readonly property bool canSeekBar: player !== null && !!player.canSeek
     && !!player.positionSupported && !!player.lengthSupported && player.length > 0
 
+  // A player with nothing to skip to (a browser video) gets dim, dead buttons.
+  readonly property bool canPrev: player !== null && !!player.canGoPrevious
+  readonly property bool canNext: player !== null && !!player.canGoNext
+
   // Dead-reckoning anchor: some browser players freeze their Position
   // after a seek until playback restarts. We track our own clock from
   // the last value we trust, so the wave never sticks on a dead number.
   property real anchorPos: 0
   property real anchorMs: 0
 
-  // True while our clock outranks what the player reports. A previous
-  // restarts the song, and a player that does that does not always say the
-  // position moved, so it keeps counting from where the song used to be.
-  // shortcut: a seek done in another app within seconds of a previous stays
-  // on our clock until the two meet again.
+  // True while our clock outranks the player after a previous: the player
+  // may keep reporting where the song used to be.
+  // ponytail: a seek in another app within seconds of a previous stays on
+  // our clock until the two land within 2 s; upgrade when Seeked is observable.
   property bool clockOwns: false
 
-  // Bumped by the clock timer: Date.now() is not a dependency, so this is
-  // what makes the position bindings re-read as the seconds pass.
+  // Bumped each tick: Date.now() is not a dependency, this is.
   property int clockTick: 0
 
-  // Take the player's position as the anchor, but never while our clock
-  // owns it: after a previous the player can still be reporting where the
-  // song used to be. A clock that owns the position also keeps its own time
-  // base, otherwise every open would snap it back to the anchor.
+  // Never anchor on the player's stale pre-restart position.
   function reanchor() {
     if (clockOwns) return
     anchorPos = player ? player.position : 0
     anchorMs = Date.now()
   }
 
-  // Where the song is, by our own clock: the anchor plus the time spent
-  // playing since, so a pause freezes it and a track length caps it.
+  // Our own clock: anchor plus playing time, capped at the length.
   readonly property real clockPos: {
     var tick = clockTick
     var p = anchorPos + (playing ? (Date.now() - anchorMs) / 1000 : 0)
@@ -90,8 +88,7 @@ Panel {
     return end > 0 ? Math.max(0, Math.min(p, end)) : Math.max(0, p)
   }
 
-  // While playing the clock leads, because it survives players that go
-  // quiet after a jump. While paused the player's own number is exact.
+  // The clock survives players that go quiet; a paused player is exact.
   readonly property real shownPos: {
     if (!player) return 0
     if (seeking && canSeekBar) return seekRatio * player.length
@@ -106,8 +103,7 @@ Panel {
     reanchor()
   }
 
-  // A new track always comes with a fresh position, so the clock can hand
-  // back the moment the song changes, even mid-song after a previous.
+  // A new track comes with a fresh position, whatever a previous did.
   readonly property int trackKey: player ? player.uniqueId : 0
   onTrackKeyChanged: {
     clockOwns = false
@@ -142,11 +138,7 @@ Panel {
     if (hostWidget && typeof hostWidget.prevTrack === "function") hostWidget.prevTrack()
   }
 
-  // A previous restarts the song, and a player that does that does not
-  // always say the position moved, so the bar would keep counting from
-  // where the song used to be. Take the clock back and start it at zero:
-  // a previous either restarts this song or opens the previous one, and
-  // both begin at zero.
+  // Prev restarted the song and no Seeked came: restart the clock at zero.
   function prevRestarted() {
     anchorPos = 0
     anchorMs = Date.now()
@@ -202,14 +194,11 @@ Panel {
     onTriggered: {
       root.clockTick++
       if (root.player) {
-        // How far ahead of the clock the player says it is. A fresh value
-        // lands on the clock, which is how a fresh one is told from a
-        // stale one that kept counting from before a restart.
+        // Fresh values land on our clock (within 2 s); stale ones do not.
         var ahead = root.player.position - root.clockPos
         if (root.clockOwns) {
           if (ahead > -2 && ahead < 2) root.clockOwns = false
         } else if (ahead > 0.5 || ahead < -2) {
-          // Re-anchor on any real move, forward or back.
           root.anchorPos = root.player.position
           root.anchorMs = Date.now()
         }
@@ -234,9 +223,7 @@ Panel {
 
   onPlayingChanged: {
     wave.requestPaint()
-    // The clock counts playing time only: a pause freezes it on the time
-    // already played, a resume starts it again from there. The player's own
-    // position is the anchor to take only when our clock does not own it.
+    // A pause freezes the clock on the time played; resume anchors there.
     if (playing) {
       if (!clockOwns) anchorPos = player ? player.position : 0
     } else {
@@ -254,9 +241,7 @@ Panel {
     if (opened) {
       root.seeking = false
       root.reanchor()
-      // The clock timer slept with the card, so the last painted position is
-      // as old as the time the card was closed. Re-read it now, instead of
-      // sitting on the old number until the first tick a second from now.
+      // Re-read the slept-on clock now, not a second from now.
       root.clockTick++
       if (root.player) root.player.positionChanged()
       wave.requestPaint()
@@ -660,7 +645,7 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
             width: 36
             height: 44
-            opacity: root.hasMedia ? 1 : 0.35
+            opacity: root.hasMedia && root.canPrev ? 1 : 0.35
             scale: prevHover.containsMouse ? (prevHover.pressed ? 0.9 : 1.18) : 1
             Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
@@ -676,7 +661,7 @@ Panel {
               id: prevHover
               anchors.fill: parent
               hoverEnabled: true
-              cursorShape: root.hasMedia ? Qt.PointingHandCursor : Qt.ArrowCursor
+              cursorShape: root.hasMedia && root.canPrev ? Qt.PointingHandCursor : Qt.ArrowCursor
               onClicked: root.prevTrack()
             }
           }
@@ -712,7 +697,7 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
             width: 36
             height: 44
-            opacity: root.hasMedia ? 1 : 0.35
+            opacity: root.hasMedia && root.canNext ? 1 : 0.35
             scale: nextHover.containsMouse ? (nextHover.pressed ? 0.9 : 1.18) : 1
             Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
@@ -728,7 +713,7 @@ Panel {
               id: nextHover
               anchors.fill: parent
               hoverEnabled: true
-              cursorShape: root.hasMedia ? Qt.PointingHandCursor : Qt.ArrowCursor
+              cursorShape: root.hasMedia && root.canNext ? Qt.PointingHandCursor : Qt.ArrowCursor
               onClicked: root.nextTrack()
             }
           }
