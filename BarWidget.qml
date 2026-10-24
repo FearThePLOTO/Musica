@@ -69,12 +69,18 @@ BarWidget {
   }
 
   function nextTrack() {
-    if (root.player && root.player.canGoNext) root.player.next()
+    if (!root.player || !root.player.canGoNext) return
+    root.player.next()
     pokeToast()
   }
 
   function prevTrack() {
-    if (root.player && root.player.canGoPrevious) root.player.previous()
+    // A player with no previous answers the call with an error (Firefox).
+    if (!root.player || !root.player.canGoPrevious) return
+    root.player.previous()
+    // Prev may restart the song without a Seeked, so tell the card's clock.
+    if (panelLoader.item && typeof panelLoader.item.prevRestarted === "function")
+      panelLoader.item.prevRestarted()
     pokeToast()
   }
 
