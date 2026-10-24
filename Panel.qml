@@ -60,25 +60,59 @@ Panel {
   property real anchorPos: 0
   property real anchorMs: 0
 
+  // True while our clock outranks what the player reports. A previous
+  // restarts the song, and a player that does that does not always say the
+  // position moved, so it keeps counting from where the song used to be.
+  // shortcut: a seek done in another app within seconds of a previous stays
+  // on our clock until the two meet again.
+  property bool clockOwns: false
+
+  // Bumped by the clock timer: Date.now() is not a dependency, so this is
+  // what makes the position bindings re-read as the seconds pass.
+  property int clockTick: 0
+
+  // Take the player's position as the anchor, but never while our clock
+  // owns it: after a previous the player can still be reporting where the
+  // song used to be. A clock that owns the position also keeps its own time
+  // base, otherwise every open would snap it back to the anchor.
   function reanchor() {
+    if (clockOwns) return
     anchorPos = player ? player.position : 0
     anchorMs = Date.now()
   }
 
-  // While playing, believe whichever is ahead: the server when it moves
-  // on its own, otherwise our clock. Capped at the track length.
+  // Where the song is, by our own clock: the anchor plus the time spent
+  // playing since, so a pause freezes it and a track length caps it.
+  readonly property real clockPos: {
+    var tick = clockTick
+    var p = anchorPos + (playing ? (Date.now() - anchorMs) / 1000 : 0)
+    var end = player && player.length > 0 ? player.length : 0
+    return end > 0 ? Math.max(0, Math.min(p, end)) : Math.max(0, p)
+  }
+
+  // While playing the clock leads, because it survives players that go
+  // quiet after a jump. While paused the player's own number is exact.
   readonly property real shownPos: {
     if (!player) return 0
     if (seeking && canSeekBar) return seekRatio * player.length
-    if (canSeekBar && playing && !seeking) {
-      var est = anchorPos + (Date.now() - anchorMs) / 1000
-      var end = player.length > 0 ? player.length : est
-      return Math.max(0, Math.min(Math.max(player.position, est), end))
-    }
-    return player.position
+    if (!canSeekBar) return player.position
+    if (playing) return clockPos
+    return clockOwns ? clockPos : player.position
   }
 
-  onPlayerChanged: reanchor()
+  onPlayerChanged: {
+    // A different player has nothing to do with the old clock.
+    clockOwns = false
+    reanchor()
+  }
+
+  // A new track always comes with a fresh position, so the clock can hand
+  // back the moment the song changes, even mid-song after a previous.
+  readonly property int trackKey: player ? player.uniqueId : 0
+  onTrackKeyChanged: {
+    clockOwns = false
+    reanchor()
+  }
 
   function open() {
     root.controller.show()
@@ -106,6 +140,19 @@ Panel {
 
   function prevTrack() {
     if (hostWidget && typeof hostWidget.prevTrack === "function") hostWidget.prevTrack()
+  }
+
+  // A previous restarts the song, and a player that does that does not
+  // always say the position moved, so the bar would keep counting from
+  // where the song used to be. Take the clock back and start it at zero:
+  // a previous either restarts this song or opens the previous one, and
+  // both begin at zero.
+  function prevRestarted() {
+    anchorPos = 0
+    anchorMs = Date.now()
+    clockOwns = true
+    if (player) player.positionChanged()
+    wave.requestPaint()
   }
 
   function cycleSource() {
@@ -153,12 +200,17 @@ Panel {
     interval: 1000
     repeat: true
     onTriggered: {
+      root.clockTick++
       if (root.player) {
-        // Re-anchor when the server moves on its own; otherwise the
-        // dead-reckoning clock keeps the wave alive.
-        var s = root.player.position
-        if (s > root.anchorPos + 0.5 || s < root.anchorPos - 2) {
-          root.anchorPos = s
+        // How far ahead of the clock the player says it is. A fresh value
+        // lands on the clock, which is how a fresh one is told from a
+        // stale one that kept counting from before a restart.
+        var ahead = root.player.position - root.clockPos
+        if (root.clockOwns) {
+          if (ahead > -2 && ahead < 2) root.clockOwns = false
+        } else if (ahead > 0.5 || ahead < -2) {
+          // Re-anchor on any real move, forward or back.
+          root.anchorPos = root.player.position
           root.anchorMs = Date.now()
         }
         root.player.positionChanged()
@@ -180,7 +232,18 @@ Panel {
     }
   }
 
-  onPlayingChanged: wave.requestPaint()
+  onPlayingChanged: {
+    wave.requestPaint()
+    // The clock counts playing time only: a pause freezes it on the time
+    // already played, a resume starts it again from there. The player's own
+    // position is the anchor to take only when our clock does not own it.
+    if (playing) {
+      if (!clockOwns) anchorPos = player ? player.position : 0
+    } else {
+      anchorPos += (Date.now() - anchorMs) / 1000
+    }
+    anchorMs = Date.now()
+  }
   onSeekRatioChanged: wave.requestPaint()
 
   // The position binding goes stale while the card is closed (Quickshell
@@ -191,6 +254,10 @@ Panel {
     if (opened) {
       root.seeking = false
       root.reanchor()
+      // The clock timer slept with the card, so the last painted position is
+      // as old as the time the card was closed. Re-read it now, instead of
+      // sitting on the old number until the first tick a second from now.
+      root.clockTick++
       if (root.player) root.player.positionChanged()
       wave.requestPaint()
     }

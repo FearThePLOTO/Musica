@@ -75,6 +75,10 @@ BarWidget {
 
   function prevTrack() {
     if (root.player && root.player.canGoPrevious) root.player.previous()
+    // The card's clock has to be told as well: a player restarting the same
+    // song does not always say the position moved.
+    if (panelLoader.item && typeof panelLoader.item.prevRestarted === "function")
+      panelLoader.item.prevRestarted()
     pokeToast()
   }
 
