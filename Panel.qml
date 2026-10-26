@@ -58,9 +58,8 @@ Panel {
   readonly property bool canPrev: player !== null && !!player.canGoPrevious
   readonly property bool canNext: player !== null && !!player.canGoNext
 
-  // Dead-reckoning anchor: some browser players freeze their Position
-  // after a seek until playback restarts. We track our own clock from
-  // the last value we trust, so the wave never sticks on a dead number.
+  // Some players freeze Position after a seek; the clock keeps the bar
+  // alive from the last trusted value while the player stays quiet.
   property real anchorPos: 0
   property real anchorMs: 0
 
@@ -98,16 +97,24 @@ Panel {
   }
 
   onPlayerChanged: {
-    // A different player has nothing to do with the old clock.
+    pinOwner = null
     clockOwns = false
     reanchor()
+    wave.requestPaint()
   }
 
-  // A new track comes with a fresh position, whatever a previous did.
+  // A track change within the same player pins the clock at zero; a player
+  // swap keeps the plain re-anchor (the new player may be mid-song).
+  property var pinOwner: null
   readonly property int trackKey: player ? player.uniqueId : 0
   onTrackKeyChanged: {
-    clockOwns = false
-    reanchor()
+    if (player === pinOwner) pinAtZero()
+    else {
+      clockOwns = false
+      reanchor()
+      wave.requestPaint()
+    }
+    pinOwner = player
   }
 
   function open() {
@@ -130,21 +137,23 @@ Panel {
     if (hostWidget && typeof hostWidget.togglePlaying === "function") hostWidget.togglePlaying()
   }
 
+  // Skip or restart: pin the clock at zero and hand it back when the
+  // player's own value lands there. Works for prev-restart (no track
+  // change to notice) and next alike.
+  function pinAtZero() {
+    anchorPos = 0
+    anchorMs = Date.now()
+    clockOwns = true
+    if (player) player.positionChanged()
+    wave.requestPaint()
+  }
+
   function nextTrack() {
     if (hostWidget && typeof hostWidget.nextTrack === "function") hostWidget.nextTrack()
   }
 
   function prevTrack() {
     if (hostWidget && typeof hostWidget.prevTrack === "function") hostWidget.prevTrack()
-  }
-
-  // Prev restarted the song and no Seeked came: restart the clock at zero.
-  function prevRestarted() {
-    anchorPos = 0
-    anchorMs = Date.now()
-    clockOwns = true
-    if (player) player.positionChanged()
-    wave.requestPaint()
   }
 
   function cycleSource() {
@@ -482,6 +491,7 @@ Panel {
               id: wave
               anchors.fill: parent
               property real phase: 0
+              readonly property real ny: height * 0.60
               readonly property var amps: (root.hostWidget && root.hostWidget.levels) ? root.hostWidget.levels : []
               readonly property real energy: {
                 var s = 0
@@ -491,7 +501,13 @@ Panel {
                 return Math.max(0.15, Math.min(1, avg * 2.2))
               }
 
-              function topY(x) {
+              // Both layers share one envelope: ramp in from the start,
+              // die flat at the thumb.
+              function smooth01(t) {
+                return t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t)
+              }
+
+              function cavaAt(x) {
                 var w = width
                 var n = amps.length
                 var a = 0
@@ -501,51 +517,87 @@ Panel {
                   var i1 = Math.min(n - 1, i0 + 1)
                   a = amps[i0] + (amps[i1] - amps[i0]) * (ci - i0)
                 }
-                return height * 0.60
-                  - Math.sin(x * 0.045 + phase) * 4 * energy
-                  - Math.sin(x * 0.11 + phase * 1.6) * 2.5 * energy
-                  - a * 10 * energy
+                return a
               }
 
-              function waveFill(ctx, x0, x1, style) {
-                var h = height
-                var base = h - 2
-                var step = 6
+              function env(x, px) {
+                var inW = Math.min(48, px * 0.4)
+                var outW = Math.min(56, px * 0.3)
+                return smooth01(x / inW) * smooth01((px - x) / outW)
+              }
+
+              function topY(x, px, back) {
+                var e = energy * env(x, px)
+                if (back) // slower, bigger swell behind the front
+                  return ny - (Math.sin(x * 0.028 + phase * 0.6 + 2.4) * 5
+                    + Math.sin(x * 0.055 + phase * 0.9 + 4.6) * 2.5
+                    + cavaAt(x) * 3) * e
+                return ny - (Math.sin(x * 0.045 + phase) * 4
+                  + Math.sin(x * 0.11 + phase * 1.6) * 2.5
+                  + cavaAt(x) * 10) * e
+              }
+
+              function waveBody(ctx, x1, px, back) {
                 ctx.beginPath()
-                ctx.moveTo(x0, base)
-                ctx.lineTo(x0, topY(x0))
-                for (var x = x0 + step; x < x1; x += step) ctx.lineTo(x, topY(x))
-                ctx.lineTo(x1, topY(x1))
-                ctx.lineTo(x1, base)
+                if (px < 12) { // sliver: the knob disk covers it anyway
+                  ctx.moveTo(0, ny)
+                  ctx.lineTo(px, ny)
+                  ctx.lineTo(px, ny + 10)
+                  ctx.lineTo(0, ny + 10)
+                } else {
+                  // hot fill of the band: crests carry the top edge, the cap
+                  // rounds the start, the knob hides the right shoulder
+                  ctx.moveTo(5, ny)
+                  for (var x = 11; x < x1; x += 6) ctx.lineTo(x, topY(x, px, back))
+                  ctx.lineTo(x1, topY(x1, px, back))
+                  for (var x2 = x1; x2 > 5; x2 -= 6) ctx.lineTo(x2, ny + 10)
+                  ctx.lineTo(5, ny + 10)
+                  ctx.arc(5, ny + 5, 5, Math.PI / 2, Math.PI * 1.5)
+                }
                 ctx.closePath()
-                ctx.fillStyle = style
                 ctx.fill()
               }
 
               onPaint: {
                 var ctx = getContext("2d")
                 var w = width
-                var h = height
-                if (w <= 0 || h <= 0) return
-                ctx.clearRect(0, 0, w, h)
-                var dim = root.bar ? Qt.alpha(root.ink, root.canSeekBar ? 0.22 : 0.12) : "#444444"
+                if (w <= 0) return
+                ctx.clearRect(0, 0, w, height)
                 var hot = root.bar ? root.bar.urgent : "#e58aa5"
-                waveFill(ctx, 0, w, dim)
                 var px = w * seekHit.ratio
+                ctx.lineCap = "round"
+                // clip the bar to rounded corners at both ends
+                ctx.save()
+                ctx.beginPath()
+                ctx.moveTo(5, 0)
+                ctx.lineTo(w - 5, 0)
+                ctx.quadraticCurveTo(w, 0, w, 5)
+                ctx.lineTo(w, height - 5)
+                ctx.quadraticCurveTo(w, height, w - 5, height)
+                ctx.lineTo(5, height)
+                ctx.quadraticCurveTo(0, height, 0, height - 5)
+                ctx.lineTo(0, 5)
+                ctx.quadraticCurveTo(0, 0, 5, 0)
+                ctx.clip()
+                // unplayed track, before the fills go over it
+                ctx.strokeStyle = root.bar ? Qt.alpha(root.ink, root.canSeekBar ? 0.3 : 0.15) : "#555555"
+                ctx.lineWidth = 10
+                ctx.beginPath()
+                ctx.moveTo(6, ny + 5)
+                ctx.lineTo(w - 6, ny + 5)
+                ctx.stroke()
                 if (px > 0) {
-                  ctx.save()
-                  ctx.beginPath()
-                  ctx.rect(0, 0, px, h)
-                  ctx.clip()
-                  waveFill(ctx, 0, w, hot)
-                  ctx.restore()
-                  var kx = Math.max(8, Math.min(w - 8, px))
-                  var ky = Math.max(8, Math.min(h - 8, (topY(kx) + h - 2) / 2))
-                  ctx.beginPath()
-                  ctx.arc(kx, ky, 8, 0, 2 * Math.PI)
+                  ctx.fillStyle = Qt.alpha(hot, 0.6)
+                  waveBody(ctx, px, px, true)
                   ctx.fillStyle = hot
-                  ctx.fill()
+                  waveBody(ctx, px, px, false)
                 }
+                // knob: always visible
+                ctx.beginPath()
+                ctx.arc(Math.max(8, Math.min(w - 8, px)), ny + 5, 8, 0, 2 * Math.PI)
+                ctx.fillStyle = hot
+                ctx.fill()
+                ctx.restore()
               }
             }
 
