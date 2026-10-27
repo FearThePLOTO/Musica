@@ -523,18 +523,54 @@ BarWidget {
     }
   }
 
-  Text {
-    id: songText
-    anchors.centerIn: parent
-    width: Math.min(implicitWidth, 180)
-    visible: root.songMode
+  TextMetrics {
+    id: songMetrics
     text: root.songLabel
-    textFormat: Text.PlainText
-    elide: Text.ElideRight
-    maximumLineCount: 1
-    color: root.bar ? root.ink : Color.foreground
     font.family: root.bar.fontFamily
     font.pixelSize: Style.font.body
+    onTextChanged: songText.offset = 0
+  }
+
+  // Oversized labels marquee on a loop: the copies travel left, and the
+  // gap folds the tail into the next pass at the right edge.
+  Item {
+    id: songText
+    anchors.centerIn: parent
+    width: Math.min(songMetrics.width, 180)
+    height: songLead.height
+    visible: root.songMode
+    clip: true
+
+    property real offset: 0
+    readonly property real gap: 40
+    readonly property bool scrolls: songMetrics.width > width
+
+    Timer {
+      running: songText.visible && songText.scrolls
+      interval: 33
+      repeat: true
+      onTriggered: songText.offset = (songText.offset + 0.75)
+        % (songMetrics.width + songText.gap)
+    }
+
+    Text {
+      id: songLead
+      x: -parent.offset
+      text: root.songLabel
+      textFormat: Text.PlainText
+      color: root.bar ? root.ink : Color.foreground
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.body
+    }
+    Text {
+      x: songLead.x + songMetrics.width + parent.gap
+      visible: parent.scrolls
+      text: root.songLabel
+      textFormat: Text.PlainText
+      color: root.bar ? root.ink : Color.foreground
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.body
+    }
   }
 
   MouseArea {
